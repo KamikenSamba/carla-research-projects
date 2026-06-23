@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+venv*/
+
+# Local run outputs
+runs/
+outputs/
+out_grids/
+logs/
+*.log
+
+# CARLA/generated data
+*.npy
+*.npz
+*.ply
+*.mp4
+*.gif
+*.png
+*.csv
+
+# Keep source/config CSVs only when explicitly forced.
+!**/configs/*.csv
+!**/send_data/.gitkeep
+
+# Local editor/OS files
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Large archives
+*.zip
+*.7z
+*.tar
+*.gz

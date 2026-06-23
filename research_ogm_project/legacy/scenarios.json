@@ -1,0 +1,84 @@
+{
+  "baseline": {
+    "use_static_mask": true,
+    "use_fixed_objects": true,
+    "ego_spawn": {
+      "x": 10.0,
+      "y": 70.0,
+      "z": 0.2,
+      "yaw": 0.0
+    },
+    "grid_origin": {
+      "use_manual": true,
+      "x": 42.0,
+      "y": 56.0
+    },
+    "rsu_lidar": {
+      "x": 42.0,
+      "y": 40.0,
+      "z": 2.0,
+      "pitch": 0.0,
+      "yaw": 90.0
+    }
+  },
+  "scenario_A": {
+    "use_static_mask": true,
+    "use_fixed_objects": true,
+    "ego_spawn": {
+      "x": 5.0,
+      "y": 70.0,
+      "z": 0.2,
+      "yaw": 0.0
+    },
+    "grid_origin": {
+      "use_manual": true,
+      "x": 42.0,
+      "y": 56.0
+    },
+    "rsu_lidar": {
+      "x": 42.0,
+      "y": 40.0,
+      "z": 2.0,
+      "pitch": 0.0,
+      "yaw": 90.0
+    }
+  },
+  "scenario_B": {
+    "use_static_mask": true,
+    "use_fixed_objects": true,
+
+    "ego_spawn": { "x": -45.0, "y": 100.0, "z": 0.2, "yaw": -90.0 },
+    "grid_origin": { "use_manual": true, "x": -50.0, "y":70.0 },
+    "rsu_lidar": { "x": -35.0, "y": 58.0, "z": 1.0, "pitch": 0.0, "yaw": 180.0 },
+
+    "actors_file": "scenario_B_actors.py",
+    "use_scenario_actors": true
+  },
+  "scenario_C": {
+    "//": "thispilot ON in main",
+    "use_static_mask": true,
+    "use_fixed_objects": true,
+    "ego_spawn": {
+      "x": -45.0,
+      "y": 50.0,
+      "z": 0.2,
+      "yaw": -90.0
+    },
+    "grid_origin": {
+      "use_manual": true,
+      "x": -46.0,
+      "y": 20.0
+    },
+    "rsu_lidar": {
+      "x": -58.0,
+      "y": 7.0,
+      "z": 2.0,
+      "pitch": 0.0,
+      "yaw": 130.0
+    },
+    "actors_file": "scenario_C_actors.py",
+    "use_scenario_actors": true
+  }
+}
+
+  
