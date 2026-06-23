@@ -1,71 +1,74 @@
-# CARLA User Projects
+# CARLA Research Projects
 
-This directory contains only user-added CARLA projects.
+This repository is for user-created CARLA research work and lightweight
+documentation. It is not a mirror of the CARLA distribution.
 
-CARLA official files are intentionally not copied here:
+CARLA official files remain outside this repository, for example:
 
 - `C:\CARLA\PythonAPI\carla`
 - `C:\CARLA\PythonAPI\examples`
 - `C:\CARLA\PythonAPI\util`
 - `C:\CARLA\CarlaUE4`
 - `C:\CARLA\Engine`
-- other CARLA distribution files
 
-## Included Projects
+## Directory Roles
 
 ```text
 C:\CARLA\user_projects
-├─ research_ogm_project
-├─ carla_simulate_project
-└─ dt_risk_prediction_project
+|-- research_ogm_project        # Self-managed OGM research project
+|-- carla_simulate_project      # Senior research code snapshot used as a dependency/reference
+|-- dt_risk_prediction_project  # Local prototypes and reference workspace
+|-- docs                        # Self-authored notes, reports, and lightweight evidence
 ```
 
-## Runtime Assumption
+## What Should Be Pushed
 
-The projects are managed separately here, but they still run against the CARLA
-installation at:
+Push self-authored source code, wrappers, configuration, documentation, and
+small evidence files that are safe to share.
 
-```text
-C:\CARLA
-```
+Examples:
 
-The Python executable used in this environment is:
+- `research_ogm_project/src/...`
+- `research_ogm_project/scripts/...`
+- `docs/...`
+- small `meta.json` or summary CSV files that do not expose raw datasets
 
-```text
-C:\Users\神谷健太朗\AppData\Local\Programs\Python\Python312\python.exe
-```
+## What Should Not Be Pushed
 
-## Data Policy
+Do not commit CARLA binaries, Unreal assets, virtual environments, generated
+simulation outputs, raw experiment CSVs, logs, model weights, archives, or local
+reference materials received from others.
 
-Generated data should stay outside Git management.
+Examples:
 
-For the OGM project, generated simulation data should continue to go under:
+- `D:\CARLA_DATA\...`
+- `*.log`
+- large raw `*.csv`
+- `*.pt`
+- `*.zip`
+- `dt_risk_prediction_project/*/`
 
-```text
-D:\CARLA_DATA
-```
+## Current Senior-Code Boundary
 
-For the CARLA simulate project, run artifacts are ignored by Git:
+`carla_simulate_project` contains a snapshot of senior research code that has
+been used to reproduce the Town10HD_Opt digital-twin risk prediction pipeline.
+Treat it as an external research dependency/reference. Avoid modifying it unless
+there is a clear reason and the change is discussed first.
 
-```text
-runs\
-*.csv
-*.png
-*.gif
-*.mp4
-*.log
-```
+New work should normally go into self-managed project code or `docs/`, not into
+the senior-code snapshot.
 
-## GitHub Use
+## Git Safety Rule
 
-If you want to create a GitHub repository, initialize Git in this directory:
+Do not use:
 
 ```powershell
-cd C:\CARLA\user_projects
-git init
-git add README.md .gitignore research_ogm_project carla_simulate_project
-git status
+git add .
+git add -A
 ```
 
-Before committing, review `git status` and make sure no generated data or CARLA
-official distribution files are included.
+Stage files explicitly, review `git diff --cached`, and then commit only the
+intended self-authored files.
+
+See [docs/repository_policy.md](docs/repository_policy.md) for the detailed
+management policy.
