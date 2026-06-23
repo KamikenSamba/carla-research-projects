@@ -16,7 +16,8 @@ CARLA official files are intentionally not copied here:
 ```text
 C:\CARLA\user_projects
 ├─ research_ogm_project
-└─ carla_simulate_project
+├─ carla_simulate_project
+└─ dt_risk_prediction_project
 ```
 
 ## Runtime Assumption
