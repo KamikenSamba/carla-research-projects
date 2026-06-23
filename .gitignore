@@ -42,3 +42,9 @@ desktop.ini
 *.7z
 *.tar
 *.gz
+
+# Local reference materials received from previous research
+dt_risk_prediction_project/上岡先輩プログラム/
+
+# Local CARLA experiment outputs
+CARLA_DATA/
