@@ -43,11 +43,15 @@ desktop.ini
 *.tar
 *.gz
 
-# Local reference materials received from previous research.
-# Keep root-level self-authored prototypes trackable, but ignore local
-# reference subdirectories under dt_risk_prediction_project.
-dt_risk_prediction_project/*/
+# External reference implementations kept only on the local machine
+/carla_simulate_project/
+/dt_risk_prediction_project/
+/docs/dt_risk_prediction/
 carla_simulate_project/reference_sources/
+
+# Model weights and archived external materials
+/**/traj_lstm.pt
+/**/carla_simulate-main.zip
 
 # Local CARLA experiment outputs
 CARLA_DATA/

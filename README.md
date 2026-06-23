@@ -1,80 +1,105 @@
-# CARLA Research Projects
+# CARLA Research Projects / CARLA Research Projects
 
-This repository is for user-created CARLA research work and lightweight
-documentation. It is not a mirror of the CARLA distribution.
+## 日本語
 
-CARLA official files remain outside this repository, for example:
+### 概要
 
-- `C:\CARLA\PythonAPI\carla`
-- `C:\CARLA\PythonAPI\examples`
-- `C:\CARLA\PythonAPI\util`
-- `C:\CARLA\CarlaUE4`
-- `C:\CARLA\Engine`
+このリポジトリには、著者が管理する研究用プログラムと設定ファイルのみを含める。外部から受領した参照実装、学習済みモデル、実験ログ、生成データは含めない。
 
-## Directory Roles
+現在の公開・追跡対象は、CARLA上で占有グリッドマップ、Ego OGM、協調認識、静的マスク生成を実行するための自作研究コードである。
+
+### 構成
 
 ```text
-C:\CARLA\user_projects
-|-- research_ogm_project        # Self-managed OGM research project
-|-- carla_simulate_project      # Senior research code snapshot used as a dependency/reference
-|   `-- reference_sources       # Local senior/reference bundles, ignored by Git
-|-- dt_risk_prediction_project  # Self-authored DT risk prediction prototypes
-|-- docs                        # Self-authored notes, reports, and lightweight evidence
+.
+|-- README.md
+|-- docs/
+|   `-- repository_policy.md
+`-- research_ogm_project/
+    |-- README.md
+    |-- configs/
+    |-- scripts/
+    |-- src/
+    `-- legacy/
 ```
 
-## What Should Be Pushed
+`legacy/` には、整理済みコードの比較・互換実行に使う既存OGMスクリプトを保持する。通常の実行入口は `scripts/` と `src/` 配下である。
 
-Push self-authored source code, wrappers, configuration, documentation, and
-small evidence files that are safe to share.
+### 実行方法
 
-Examples:
+詳細な実行方法は `research_ogm_project/README.md` を参照する。
 
-- `research_ogm_project/src/...`
-- `research_ogm_project/scripts/...`
-- `docs/...`
-- small `meta.json` or summary CSV files that do not expose raw datasets
-
-## What Should Not Be Pushed
-
-Do not commit CARLA binaries, Unreal assets, virtual environments, generated
-simulation outputs, raw experiment CSVs, logs, model weights, archives, or local
-reference materials received from others.
-
-Examples:
-
-- `D:\CARLA_DATA\...`
-- `*.log`
-- large raw `*.csv`
-- `*.pt`
-- `*.zip`
-- `dt_risk_prediction_project/*/`
-- `carla_simulate_project/reference_sources/`
-
-## Current Senior-Code Boundary
-
-`carla_simulate_project` contains a snapshot of senior research code that has
-been used to reproduce the Town10HD_Opt digital-twin risk prediction pipeline.
-Treat it as an external research dependency/reference. Avoid modifying it unless
-there is a clear reason and the change is discussed first.
-
-Additional received senior/reference bundles are stored locally under
-`carla_simulate_project/reference_sources/`. This directory is ignored by Git and
-is not pushed to GitHub.
-
-New work should normally go into self-managed project code or `docs/`, not into
-the senior-code snapshot.
-
-## Git Safety Rule
-
-Do not use:
+代表的な実行入口は次の通り。
 
 ```powershell
-git add .
-git add -A
+cd research_ogm_project
+python scripts\build_static_mask.py
+python scripts\run_coop_comm.py --scenario-file configs\scenarios.json --scenario scenario_A
+python scripts\run_ego_ogm.py --scenario-file configs\scenarios.json --scenario scenario_A
 ```
 
-Stage files explicitly, review `git diff --cached`, and then commit only the
-intended self-authored files.
+### 入出力
 
-See [docs/repository_policy.md](docs/repository_policy.md) for the detailed
-management policy.
+入力設定は主に `research_ogm_project/configs/` に置く。シミュレーションにより生成されるPNG、CSV、PLY、MP4、マスク、ログなどは、リポジトリ外のデータ保存先へ出力する。
+
+生成データ、実験ログ、学習済み重み、外部参照実装、CARLA本体、Python仮想環境はGitHubへ含めない。
+
+### 注意事項
+
+- `git add .` と `git add -A` は使わず、公開するファイルだけを明示的にステージする。
+- 外部から受領した参照実装やモデル重みはローカルに保持しても、Gitの追跡対象にしない。
+- CARLA本体、Unreal Engine、仮想環境、生成データはこのリポジトリの管理対象外である。
+- 追跡対象の方針は `docs/repository_policy.md` に記録する。
+
+---
+
+## English
+
+### Overview
+
+This repository contains only research code and configuration files maintained by the author. External reference implementations, trained models, experiment logs, and generated data are excluded.
+
+The currently tracked project is the author-maintained CARLA OGM research code for occupancy grid maps, Ego OGM, cooperative perception, and static mask generation.
+
+### Structure
+
+```text
+.
+|-- README.md
+|-- docs/
+|   `-- repository_policy.md
+`-- research_ogm_project/
+    |-- README.md
+    |-- configs/
+    |-- scripts/
+    |-- src/
+    `-- legacy/
+```
+
+The `legacy/` directory keeps existing OGM scripts for comparison and compatibility execution. Normal entry points are under `scripts/` and `src/`.
+
+### How to Run
+
+See `research_ogm_project/README.md` for detailed execution steps.
+
+Typical entry points are:
+
+```powershell
+cd research_ogm_project
+python scripts\build_static_mask.py
+python scripts\run_coop_comm.py --scenario-file configs\scenarios.json --scenario scenario_A
+python scripts\run_ego_ogm.py --scenario-file configs\scenarios.json --scenario scenario_A
+```
+
+### Inputs and Outputs
+
+Input configuration files are mainly stored in `research_ogm_project/configs/`. Generated PNG, CSV, PLY, MP4, mask, and log files should be written to a data directory outside this repository.
+
+Generated data, experiment logs, trained weights, external reference implementations, the CARLA distribution, and Python virtual environments are not included on GitHub.
+
+### Notes
+
+- Do not use `git add .` or `git add -A`; stage only the files intended for publication.
+- Reference implementations or model weights received from external sources may be kept locally, but they must not be tracked by Git.
+- The CARLA distribution, Unreal Engine files, virtual environments, and generated data are outside the scope of this repository.
+- The tracking policy is recorded in `docs/repository_policy.md`.

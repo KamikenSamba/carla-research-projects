@@ -1,72 +1,27 @@
-# Repository Management Policy
+# リポジトリ管理方針 / Repository Management Policy
 
-This document separates self-authored work from senior research code, local
-reference materials, and generated experiment data.
+## 日本語
 
-## 1. Categories
+### 概要
 
-| Category | Path | GitHub policy |
+この文書は、GitHubで追跡する対象を著者が管理する研究用プログラムに限定するための方針を示す。現在の公開対象は `research_ogm_project/` を中心とするOGM研究コードである。
+
+外部から受領した参照実装、先輩研究コード、学習済みモデル、実験ログ、生成データ、CARLA本体、仮想環境はGitHubへ含めない。
+
+### 構成
+
+| 種別 | パス | 方針 |
 |---|---|---|
-| Self-managed OGM research code | `research_ogm_project/` | Push self-authored changes and documentation. Do not modify `legacy/` unless explicitly requested. |
-| Senior research code snapshot | `carla_simulate_project/` | Treat as an external research dependency/reference. Avoid modifying or adding to it unless clearly necessary and discussed first. |
-| Local senior/reference bundles | `carla_simulate_project/reference_sources/` | Keep locally only. This path is ignored and should not be pushed. |
-| DT risk prediction local workspace | `dt_risk_prediction_project/` | Root-level self-authored prototypes may be tracked. Senior/reference bundles should not remain here. |
-| Shared documentation and evidence | `docs/` | Preferred place for self-authored reports, reproduction notes, and small safe artifacts. |
-| Generated data | `D:\CARLA_DATA\...` | Never commit. Keep outputs on the data drive. |
+| 自作OGM研究コード | `research_ogm_project/` | GitHubで追跡する |
+| リポジトリ説明 | `README.md` | GitHubで追跡する |
+| 管理方針 | `docs/repository_policy.md` | GitHubで追跡する |
+| 外部参照実装 | `carla_simulate_project/` | ローカル保持のみ |
+| DTリスク予測再現作業 | `dt_risk_prediction_project/`, `docs/dt_risk_prediction/` | ローカル保持のみ |
+| 生成データ | データ保存先ディレクトリ | GitHubへ含めない |
 
-## 2. Push Scope
+### 実行方法
 
-By default, push only:
-
-- self-authored program files
-- self-authored wrappers or scripts
-- configuration files needed to reproduce self-authored workflows
-- documentation written in this repository
-- lightweight, non-sensitive evidence files
-
-Do not push:
-
-- CARLA binaries or Unreal files
-- virtual environments
-- raw simulation CSVs
-- run logs
-- model weights such as `*.pt`
-- archives such as `*.zip`
-- senior research material received as local reference
-- files under ignored local reference directories
-
-## 3. Senior Code Handling
-
-`carla_simulate_project/` is currently used as the execution source for the
-senior digital-twin risk prediction workflow. It should remain operational
-locally, but future self-authored work should be separated from it.
-
-When extending functionality:
-
-1. Prefer adding self-authored wrappers, notes, or reports outside the senior
-   snapshot.
-2. If the senior code itself must change, record the reason and exact files
-   before editing.
-3. Do not add newly received senior files, raw datasets, or reference archives
-   to GitHub without explicit permission.
-
-## 4. Local Reference Handling
-
-Local senior/reference material should be kept under
-`carla_simulate_project/reference_sources/`, which is ignored by `.gitignore`.
-This keeps received files available on the machine while avoiding accidental
-publication.
-
-`dt_risk_prediction_project/` should contain self-authored DT risk prediction
-prototype files only. If senior/reference material is found there, move it into
-`carla_simulate_project/reference_sources/`.
-
-If a new local reference location is created, add an explicit ignore rule before
-placing private or third-party material inside it.
-
-## 5. Git Procedure
-
-Use explicit staging only:
+Git操作では、公開するファイルだけを明示的にステージする。
 
 ```powershell
 git status --short --branch
@@ -77,20 +32,72 @@ git commit -m "<message>"
 git push origin <current-branch>
 ```
 
-Never use broad staging for this repository:
+次のコマンドは使用しない。
 
 ```powershell
 git add .
 git add -A
 ```
 
-Before pushing, confirm that no senior-code bundle, generated data, raw CSV,
-log, model weight, archive, virtual environment, or CARLA distribution file is
-staged.
+### 入出力
 
-## 6. Existing Tracked Code Note
+GitHubへ含める入力・設定は、自作OGM実験に必要な最小限の設定ファイルに限定する。PNG、CSV、PLY、MP4、ログ、マスク、学習済み重み、zip、実験結果はGitHubへ含めない。
 
-Some senior-code snapshot files are already tracked in the repository. Removing
-them from the current branch can be done with an ordinary deletion commit, but
-that does not erase them from Git history. History rewriting is not part of the
-normal workflow and should not be done without an explicit decision.
+### 注意事項
+
+- 外部参照コードをローカルに残したまま追跡解除する場合は `git rm --cached` を使う。
+- 履歴書換え、force push、rebase、BFG Repo-Cleaner、git filter-repo は通常作業では使わない。
+- 現在のGitHubツリーから除外しても、過去のcommit履歴にはファイルが残る場合がある。
+- 履歴から完全に削除するには、影響範囲を確認したうえで別作業として判断する。
+
+---
+
+## English
+
+### Overview
+
+This document defines the repository policy for tracking only research programs maintained by the author. The current public scope is the OGM research code centered on `research_ogm_project/`.
+
+External reference implementations, senior research code, trained models, experiment logs, generated data, the CARLA distribution, and virtual environments are excluded from GitHub.
+
+### Structure
+
+| Category | Path | Policy |
+|---|---|---|
+| Author-maintained OGM research code | `research_ogm_project/` | Tracked on GitHub |
+| Repository overview | `README.md` | Tracked on GitHub |
+| Management policy | `docs/repository_policy.md` | Tracked on GitHub |
+| External reference implementation | `carla_simulate_project/` | Local only |
+| DT risk reproduction work | `dt_risk_prediction_project/`, `docs/dt_risk_prediction/` | Local only |
+| Generated data | Data output directories | Excluded from GitHub |
+
+### How to Run
+
+For Git operations, stage only the files intended for publication.
+
+```powershell
+git status --short --branch
+git diff -- <target-files>
+git add <target-file-1> <target-file-2>
+git diff --cached
+git commit -m "<message>"
+git push origin <current-branch>
+```
+
+Do not use:
+
+```powershell
+git add .
+git add -A
+```
+
+### Inputs and Outputs
+
+Tracked inputs and configuration files are limited to the minimum files required for the author-maintained OGM experiments. PNG, CSV, PLY, MP4, log, mask, trained-weight, archive, and experiment-result files are excluded from GitHub.
+
+### Notes
+
+- Use `git rm --cached` when untracking external reference code while keeping it on the local machine.
+- History rewriting, force push, rebase, BFG Repo-Cleaner, and git filter-repo are not part of the normal workflow.
+- Files removed from the current GitHub tree may still remain in past commits.
+- Complete history removal should be considered separately after checking its impact.
