@@ -45,9 +45,9 @@ desktop.ini
 
 # External reference implementations kept only on the local machine
 /carla_simulate_project/
-/dt_risk_prediction_project/
 /docs/dt_risk_prediction/
 carla_simulate_project/reference_sources/
+dt_risk_prediction_project/*/
 
 # Model weights and archived external materials
 /**/traj_lstm.pt
