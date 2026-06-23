@@ -47,6 +47,7 @@ desktop.ini
 # Keep root-level self-authored prototypes trackable, but ignore local
 # reference subdirectories under dt_risk_prediction_project.
 dt_risk_prediction_project/*/
+carla_simulate_project/reference_sources/
 
 # Local CARLA experiment outputs
 CARLA_DATA/

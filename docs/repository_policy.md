@@ -9,7 +9,8 @@ reference materials, and generated experiment data.
 |---|---|---|
 | Self-managed OGM research code | `research_ogm_project/` | Push self-authored changes and documentation. Do not modify `legacy/` unless explicitly requested. |
 | Senior research code snapshot | `carla_simulate_project/` | Treat as an external research dependency/reference. Avoid modifying or adding to it unless clearly necessary and discussed first. |
-| DT risk prediction local workspace | `dt_risk_prediction_project/` | Root-level self-authored prototypes may be tracked. Local reference subdirectories are ignored. |
+| Local senior/reference bundles | `carla_simulate_project/reference_sources/` | Keep locally only. This path is ignored and should not be pushed. |
+| DT risk prediction local workspace | `dt_risk_prediction_project/` | Root-level self-authored prototypes may be tracked. Senior/reference bundles should not remain here. |
 | Shared documentation and evidence | `docs/` | Preferred place for self-authored reports, reproduction notes, and small safe artifacts. |
 | Generated data | `D:\CARLA_DATA\...` | Never commit. Keep outputs on the data drive. |
 
@@ -51,11 +52,16 @@ When extending functionality:
 
 ## 4. Local Reference Handling
 
-Local reference material under `dt_risk_prediction_project/*/` is ignored by
-`.gitignore`. This keeps received files available on the machine while avoiding
-accidental publication.
+Local senior/reference material should be kept under
+`carla_simulate_project/reference_sources/`, which is ignored by `.gitignore`.
+This keeps received files available on the machine while avoiding accidental
+publication.
 
-If a new local reference directory is created, add an explicit ignore rule before
+`dt_risk_prediction_project/` should contain self-authored DT risk prediction
+prototype files only. If senior/reference material is found there, move it into
+`carla_simulate_project/reference_sources/`.
+
+If a new local reference location is created, add an explicit ignore rule before
 placing private or third-party material inside it.
 
 ## 5. Git Procedure

@@ -17,7 +17,8 @@ CARLA official files remain outside this repository, for example:
 C:\CARLA\user_projects
 |-- research_ogm_project        # Self-managed OGM research project
 |-- carla_simulate_project      # Senior research code snapshot used as a dependency/reference
-|-- dt_risk_prediction_project  # Local prototypes and reference workspace
+|   `-- reference_sources       # Local senior/reference bundles, ignored by Git
+|-- dt_risk_prediction_project  # Self-authored DT risk prediction prototypes
 |-- docs                        # Self-authored notes, reports, and lightweight evidence
 ```
 
@@ -47,6 +48,7 @@ Examples:
 - `*.pt`
 - `*.zip`
 - `dt_risk_prediction_project/*/`
+- `carla_simulate_project/reference_sources/`
 
 ## Current Senior-Code Boundary
 
@@ -54,6 +56,10 @@ Examples:
 been used to reproduce the Town10HD_Opt digital-twin risk prediction pipeline.
 Treat it as an external research dependency/reference. Avoid modifying it unless
 there is a clear reason and the change is discussed first.
+
+Additional received senior/reference bundles are stored locally under
+`carla_simulate_project/reference_sources/`. This directory is ignored by Git and
+is not pushed to GitHub.
 
 New work should normally go into self-managed project code or `docs/`, not into
 the senior-code snapshot.
