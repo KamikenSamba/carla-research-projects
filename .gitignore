@@ -31,10 +31,20 @@ logs/
 *.npy
 *.npz
 *.ply
+*.pcd
+*.las
+*.laz
+*.bag
 *.mp4
+*.avi
+*.mkv
 *.gif
 *.png
 *.csv
+*.pt
+*.pth
+*.ckpt
+*.onnx
 
 # Keep source/config CSVs only when explicitly forced.
 !**/configs/*.csv
@@ -51,6 +61,11 @@ desktop.ini
 *.7z
 *.tar
 *.gz
+
+# Local credential files
+*.p12
+credentials*.json
+secrets*.json
 
 # External reference implementations kept only on the local machine
 /carla_simulate_project/

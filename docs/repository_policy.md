@@ -4,7 +4,9 @@
 
 ### 概要
 
-この文書は、GitHubで追跡する対象を著者が管理する研究用プログラムに限定するための方針を示す。現在の公開対象は `research_ogm_project/` を中心とするOGM研究コードである。
+この文書は、GitHubで追跡する対象を著者が管理する研究用プログラムに限定するための方針を示す。`carla-research-projects` をCARLA研究用monorepoの正式な正本とし、OGM研究は `research_ogm_project/`、DTリスク予測は `dt_risk_prediction_project/` で管理する。
+
+独立Repository `KamikenSamba/research_ogm_project` の履歴は移行時点の参照として保持するが、移行完了後の新規Issue、branch、Pull Requestはこのmonorepoで作成する。
 
 外部から受領した参照実装、先輩研究コード、学習済みモデル、実験ログ、生成データ、CARLA本体、仮想環境はGitHubへ含めない。
 
@@ -57,7 +59,9 @@ GitHubへ含める入力・設定は、自作OGM実験に必要な最小限の�
 
 ### Overview
 
-This document defines the repository policy for tracking only research programs maintained by the author. The current public scope is the OGM research code centered on `research_ogm_project/`.
+This document limits GitHub tracking to author-maintained research programs. `carla-research-projects` is the canonical CARLA research monorepo: OGM research lives under `research_ogm_project/`, and DT risk prediction lives under `dt_risk_prediction_project/`.
+
+The history of the standalone `KamikenSamba/research_ogm_project` repository remains available as a migration reference, but new Issues, branches, and Pull Requests are created in this monorepo after migration.
 
 External reference implementations, senior research code, trained models, experiment logs, generated data, the CARLA distribution, and virtual environments are excluded from GitHub.
 
