@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "priority_crossing_town10_v1_seed42",
+  "scenario_name": "priority_crossing_v1",
+  "map_name": "Town10HD_Opt",
+  "fixed_delta_seconds": 0.05,
+  "prediction_horizon_s": 6.0,
+  "warmup_seconds": 1.0,
+  "random_seed": 42,
+  "tm_seed": 42,
+  "grid": {
+    "center_x": 42.0,
+    "center_y": 56.0,
+    "resolution_m": 0.2,
+    "nx": 300,
+    "ny": 300
+  },
+  "ego": {
+    "blueprint": "vehicle.tesla.model3",
+    "x": 14.13,
+    "y": 69.71,
+    "z": 0.6,
+    "yaw": 0.1,
+    "speed_mps": 8.0,
+    "turn_x": 40.4,
+    "turn_yaw": -90.8
+  },
+  "target": {
+    "blueprint": "vehicle.audi.tt",
+    "x": 40.39,
+    "y": 41.95,
+    "z": 0.6,
+    "yaw": 89.2,
+    "conflict_y": 56.0,
+    "arrival_time_s": 5.0
+  },
+  "rsu": {
+    "x": 40.4,
+    "y": 49.0,
+    "z": 3.0,
+    "pitch": 0.0,
+    "yaw": 0.0
+  },
+  "lidar": {
+    "channels": 32,
+    "range_m": 500.0,
+    "rotation_hz": 20.0,
+    "points_per_second": 200000,
+    "ego_relative_x": 10.0,
+    "ego_relative_y": 0.0,
+    "ego_relative_z": 2.2,
+    "z_min_world": 0.1,
+    "z_max_world": 2.0,
+    "rsu_free_scale": 0.15
+  },
+  "risk": {
+    "near_miss_distance_m": 4.0,
+    "min_closing_speed_mps": 1.0,
+    "near_miss_cooldown_s": 1.0,
+    "near_miss_region_radius_m": 4.0,
+    "sigma_m": 2.0
+  }
+}

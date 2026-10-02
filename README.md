@@ -6,24 +6,31 @@
 
 このリポジトリには、著者が管理する研究用プログラムと設定ファイルのみを含める。外部から受領した参照実装、学習済みモデル、実験ログ、生成データは含めない。
 
-現在の公開・追跡対象は、CARLA上で占有グリッドマップ、Ego OGM、協調認識、静的マスク生成を実行する自作研究コードと、`dt_risk_prediction_project/` の自作DTリスク予測ツールである。
+このmonorepoをCARLA研究コードの正式な正本とする。現在の公開・追跡対象は、`research_ogm_project/` の占有グリッドマップ・協調認識研究コードと、`dt_risk_prediction_project/` のDTリスク予測ツールである。
 
 ### 構成
 
 ```text
 .
+|-- .github/
+|-- AGENTS.md
 |-- README.md
 |-- docs/
 |   `-- repository_policy.md
-`-- research_ogm_project/
+|-- research_ogm_project/
     |-- README.md
     |-- configs/
+    |-- docs/
+    |-- legacy/
     |-- scripts/
     |-- src/
-    `-- legacy/
+    `-- tests/
+`-- dt_risk_prediction_project/
 ```
 
-`legacy/` には、整理済みコードの比較・互換実行に使う既存OGMスクリプトを保持する。通常の実行入口は `scripts/` と `src/` 配下である。
+`research_ogm_project/legacy/` には、整理済みコードの比較・互換実行に使う既存OGMスクリプトを保持する。通常の実行入口は `research_ogm_project/scripts/` と `research_ogm_project/src/` 配下である。
+
+OGMに関する今後のIssue、branch、Pull RequestはこのRepositoryで作成し、`research_ogm_project/` を変更する。
 
 `carla_simulate_project/` は外部参照実装としてローカル保持のみにし、GitHubへ追加しない。
 
@@ -69,24 +76,31 @@ python scripts\run_ego_ogm.py --scenario-file configs\scenarios.json --scenario 
 
 This repository contains only research code and configuration files maintained by the author. External reference implementations, trained models, experiment logs, and generated data are excluded.
 
-The tracked scope contains the author-maintained CARLA OGM research code and the author-maintained DT risk-prediction tools under `dt_risk_prediction_project/`.
+This monorepo is the canonical source for the CARLA research code. The tracked scope contains the OGM and cooperative-perception research code under `research_ogm_project/` and the DT risk-prediction tools under `dt_risk_prediction_project/`.
 
 ### Structure
 
 ```text
 .
+|-- .github/
+|-- AGENTS.md
 |-- README.md
 |-- docs/
 |   `-- repository_policy.md
-`-- research_ogm_project/
+|-- research_ogm_project/
     |-- README.md
     |-- configs/
+    |-- docs/
+    |-- legacy/
     |-- scripts/
     |-- src/
-    `-- legacy/
+    `-- tests/
+`-- dt_risk_prediction_project/
 ```
 
-The `legacy/` directory keeps existing OGM scripts for comparison and compatibility execution. Normal entry points are under `scripts/` and `src/`.
+The `research_ogm_project/legacy/` directory keeps existing OGM scripts for comparison and compatibility execution. Normal entry points are under `research_ogm_project/scripts/` and `research_ogm_project/src/`.
+
+Create future OGM Issues, branches, and Pull Requests in this repository and make their code changes under `research_ogm_project/`.
 
 `carla_simulate_project/` is a local-only external reference implementation and must not be added to GitHub.
 

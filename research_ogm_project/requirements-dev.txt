@@ -1,0 +1,6 @@
+# Offline development and CI dependencies. CARLA is installed separately from its wheel.
+# NumPy 2.3+ preserves the bit-exact Phase 1c baseline used by the regression suite.
+numpy>=2.3,<3.0
+matplotlib>=3.10,<4
+Pillow>=10,<13
+pytest>=8,<10

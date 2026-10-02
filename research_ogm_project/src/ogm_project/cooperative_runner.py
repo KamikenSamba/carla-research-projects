@@ -43,6 +43,18 @@ def run_coop_comm(argv: list[str] | None = None) -> None:
     parser.add_argument("--scenario-file", default=str(CONFIG_DIR / "scenarios.json"))
     parser.add_argument("--scenario", default=DEFAULT_SCENARIO)
     parser.add_argument("--list-scenarios", action="store_true")
+    parser.add_argument("--ogm-diagnostics", action="store_true",
+                        help="Enable read-only Phase-0 OGM diagnostics")
+    parser.add_argument("--ogm-diagnostics-road-mask", default=None)
+    parser.add_argument("--ogm-diagnostics-road-mask-metadata", default=None)
+    parser.add_argument("--phase1-free-ray", action="store_true",
+                        help="DEPRECATED Phase-1 replacement model (default: off; distinct from Phase 1a)")
+    parser.add_argument("--phase1-compare-baseline", default=None,
+                        help="Phase-0 diagnostics directory for before/after artifacts")
+    parser.add_argument("--phase1a-paired-diagnostics", action="store_true",
+                        help="Compare legacy and Phase 1a shadows on identical measurements/decay")
+    parser.add_argument("--ogm-engine-shadow-compare", action="store_true",
+                        help="Run deprecated Legacy and Common OGM Engine shadows on identical inputs")
     args, passthrough = parser.parse_known_args(argv)
 
     scenario_file = resolve_project_path(args.scenario_file, CONFIG_DIR / "scenarios.json")
@@ -63,6 +75,21 @@ def run_coop_comm(argv: list[str] | None = None) -> None:
         ]
         if args.scenario:
             sys.argv += ["--scenario", args.scenario]
+        if args.ogm_diagnostics:
+            sys.argv += ["--ogm-diagnostics"]
+        if args.ogm_diagnostics_road_mask:
+            sys.argv += ["--ogm-diagnostics-road-mask", args.ogm_diagnostics_road_mask]
+        if args.ogm_diagnostics_road_mask_metadata:
+            sys.argv += ["--ogm-diagnostics-road-mask-metadata",
+                         args.ogm_diagnostics_road_mask_metadata]
+        if args.phase1_free_ray:
+            sys.argv += ["--phase1-free-ray"]
+        if args.phase1_compare_baseline:
+            sys.argv += ["--phase1-compare-baseline", args.phase1_compare_baseline]
+        if args.phase1a_paired_diagnostics:
+            sys.argv += ["--phase1a-paired-diagnostics"]
+        if args.ogm_engine_shadow_compare:
+            sys.argv += ["--ogm-engine-shadow-compare"]
         sys.argv += passthrough
 
         os.chdir(PROJECT_ROOT)

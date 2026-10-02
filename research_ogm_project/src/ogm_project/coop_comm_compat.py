@@ -23,6 +23,10 @@ from ogm_project.spectator_utils import (
     sleep_for_realtime_preview,
     update_spectator,
 )
+from ogm_project.ogm_engine import (
+    OGMGridContract, OGMUpdateConfig, apply_decay, update_lidar_measurement,
+    z_filter_mask,
+)
 
 
 
@@ -94,8 +98,7 @@ DECAY_PER_SEC_EGO = 0.4
 DECAY_PER_SEC_RSU = 0.3
 
 # 可視化しきい値
-OCC_TH  = 0.60
-FREE_TH = 0.48
+from ogm_project.logodds import OCC_TH, FREE_TH
 
 # RSU Free スケール（途中セル）
 RSU_FREE_SCALE = 0.15
@@ -357,6 +360,26 @@ def parse_args():
     p.add_argument("--scenario-file", type=str, default="scenarios.json")
     p.add_argument("--scenario", type=str, default=None)
     p.add_argument("--list-scenarios", action="store_true")
+    p.add_argument("--save-priority-debug", action="store_true",
+                   help="Save one coherent Ego/local-RSU snapshot; requires a verified mask sidecar")
+    p.add_argument("--priority-mask", default=None)
+    p.add_argument("--priority-mask-metadata", default=None)
+    p.add_argument("--priority-target-id", default=None)
+    p.add_argument("--priority-time-reference-id", default=None)
+    p.add_argument("--ogm-diagnostics", action="store_true",
+                   help="Enable read-only Phase-0 OGM diagnostics")
+    p.add_argument("--ogm-diagnostics-road-mask", default=None,
+                   help="Road-mask .npy with GridContract-compatible metadata")
+    p.add_argument("--ogm-diagnostics-road-mask-metadata", default=None,
+                   help="Metadata JSON for --ogm-diagnostics-road-mask")
+    p.add_argument("--phase1-free-ray", action="store_true",
+                   help="Use only the 3D ray segment inside the occupancy-height slab for Free updates")
+    p.add_argument("--phase1-compare-baseline", default=None,
+                   help="Phase-0 diagnostics directory used to generate Phase-1 comparison artifacts")
+    p.add_argument("--phase1a-paired-diagnostics", action="store_true",
+                   help="Paired Phase-0/Phase-1a shadows: legacy valid returns plus rejected-return Free only")
+    p.add_argument("--ogm-engine-shadow-compare", action="store_true",
+                   help="Compare deprecated Legacy and Common Engine on identical measurements")
     # 既存運用で余計な引数が混ざっても落ちないようにする
     args, _unknown = p.parse_known_args()
     return args
@@ -480,6 +503,32 @@ def update_from_points_with_origin(points_xyz_world: np.ndarray,
                                    static_mask_arr=None):
     """互換用ラッパ（将来 static_mask を更新に使う場合に備えて残している）"""
     update_from_points(points_xyz_world, origin_xy_world, target_logodds, free_scale=free_scale)
+
+
+# Deprecated Phase 1b.6 regression reference.  Keep this independent function
+# until the Common Engine migration has remained stable across later phases.
+legacy_update_from_points_reference = update_from_points
+legacy_decay_logodds_reference = decay_logodds
+
+
+def make_ogm_update_config(*, free_scale, decay_rate):
+    """Build a frozen config from the existing runtime constants."""
+    return OGMUpdateConfig(
+        z_min=Z_MIN_WORLD, z_max=Z_MAX_WORLD, lidar_range=LIDAR_RANGE,
+        free_logodds=L_FREE, occupied_logodds=L_OCC,
+        free_scale=free_scale, logodds_min=L_MIN, logodds_max=L_MAX,
+        known_free_threshold=FREE_TH, occupied_threshold=OCC_TH,
+        decay_rate=decay_rate, initial_logodds=L0,
+    )
+
+
+def make_ogm_grid_contract():
+    return OGMGridContract(world_to_grid, in_bounds, bresenham)
+
+
+def common_decay_with_runtime_rate(arr, dt, rate):
+    """Compatibility signature for diagnostics, backed by Common Engine."""
+    apply_decay(arr, dt, make_ogm_update_config(free_scale=1.0, decay_rate=rate))
 
 
 # ===== 配色 =====
@@ -743,6 +792,19 @@ def main():
     global static_mask
     static_mask = load_static_mask()
 
+    priority_debug = None
+    diagnostics = None
+    phase1a_paired = None
+    ogm_engine_shadow = None
+    if args.save_priority_debug:
+        from ogm_project.priority_snapshot import PrioritySnapshot, preflight_mask
+        from ogm_project.grid_contract import runtime_grid_metadata
+        from ogm_project.risk_priority import sha256
+        priority_mask_path = args.priority_mask or STATIC_MASK_PATH
+        if not args.priority_mask_metadata:
+            raise ValueError("--save-priority-debug requires --priority-mask-metadata; shape-only masks are unsafe")
+        preflight_mask(priority_mask_path, args.priority_mask_metadata)
+
 
     os.makedirs(OUT_DIR, exist_ok=True)
     run_dir = os.path.join(OUT_DIR, RUN_TAG)
@@ -774,6 +836,18 @@ def main():
     logodds_ego       = np.full((ny, nx), L0, dtype=np.float32)
     logodds_rsu_local = np.full((ny, nx), L0, dtype=np.float32)
     logodds_rsu_recv  = np.full((ny, nx), L0, dtype=np.float32)
+    ogm_grid_contract = make_ogm_grid_contract()
+    ego_ogm_config = make_ogm_update_config(
+        free_scale=1.0, decay_rate=DECAY_PER_SEC_EGO)
+    rsu_ogm_config = make_ogm_update_config(
+        free_scale=RSU_FREE_SCALE, decay_rate=DECAY_PER_SEC_RSU)
+    if args.ogm_engine_shadow_compare:
+        from ogm_project.ogm_engine_shadow import OGMEngineShadowComparison
+        ogm_engine_shadow = OGMEngineShadowComparison(
+            os.path.join(run_dir, "ogm_engine_shadow"), (ny, nx),
+            ogm_grid_contract, ego_ogm_config, rsu_ogm_config,
+            legacy_update_from_points_reference, legacy_decay_logodds_reference,
+        )
 
     ego_points_all = []
     rsu_points_all = []
@@ -862,6 +936,94 @@ def main():
             ORIGIN_Y = spawn.location.y
             print(f"[INFO] WORLD grid origin set to Ego spawn ({ORIGIN_X:.2f}, {ORIGIN_Y:.2f})")
 
+        if args.save_priority_debug:
+            grid_metadata = runtime_grid_metadata(
+                map_name=world.get_map().name.replace('\\', '/').split('/')[-1],
+                origin_x=ORIGIN_X, origin_y=ORIGIN_Y, x_min=X_MIN, x_max=X_MAX,
+                y_min=Y_MIN, y_max=Y_MAX, resolution=RES, nx=nx, ny=ny)
+            priority_debug = PrioritySnapshot(
+                os.path.join(run_dir, "priority_debug"), grid_metadata,
+                priority_mask_path, args.priority_mask_metadata,
+                dict(scenario_id=args.scenario,
+                     scenario_sha256=sha256(args.scenario_file) if args.scenario_file and os.path.isfile(args.scenario_file) else None,
+                     ego_initial_pose=dict(x=spawn.location.x, y=spawn.location.y, z=spawn.location.z,
+                                           yaw=spawn.rotation.yaw),
+                     target_id=args.priority_target_id,
+                     time_reference_id=args.priority_time_reference_id or os.path.abspath(run_dir)))
+
+        if args.ogm_diagnostics:
+            from ogm_project.grid_contract import runtime_grid_metadata, GridContract
+            from ogm_project.ogm_diagnostics import OGMDiagnostics
+            road_mask_path = args.ogm_diagnostics_road_mask or args.priority_mask
+            road_metadata_path = (args.ogm_diagnostics_road_mask_metadata or
+                                  args.priority_mask_metadata)
+            if not road_mask_path or not road_metadata_path:
+                raise ValueError(
+                    "--ogm-diagnostics requires --ogm-diagnostics-road-mask and "
+                    "--ogm-diagnostics-road-mask-metadata (or the equivalent priority-mask options)"
+                )
+            diagnostics_grid_metadata = runtime_grid_metadata(
+                map_name=world.get_map().name.replace('\\', '/').split('/')[-1],
+                origin_x=ORIGIN_X, origin_y=ORIGIN_Y, x_min=X_MIN, x_max=X_MAX,
+                y_min=Y_MIN, y_max=Y_MAX, resolution=RES, nx=nx, ny=ny)
+            diagnostics = OGMDiagnostics(
+                os.path.join(run_dir, "diagnostics"),
+                GridContract.from_metadata(diagnostics_grid_metadata),
+                road_mask_path, road_metadata_path,
+                z_min_world=Z_MIN_WORLD, z_max_world=Z_MAX_WORLD,
+                lidar_range=LIDAR_RANGE, world_to_grid=world_to_grid,
+                in_bounds=in_bounds, bresenham=bresenham,
+                experiment=dict(
+                    scenario_id=args.scenario,
+                    scenario_file=os.path.abspath(args.scenario_file) if args.scenario_file else None,
+                    map_name=world.get_map().name.replace('\\', '/').split('/')[-1],
+                    fixed_delta_seconds=FIXED_DELTA,
+                    ego_initial_pose=dict(x=spawn.location.x, y=spawn.location.y,
+                                          z=spawn.location.z, yaw=spawn.rotation.yaw),
+                    rsu_pose=dict(x=RSU_LIDAR_X, y=RSU_LIDAR_Y, z=RSU_LIDAR_Z,
+                                  pitch=RSU_PITCH, yaw=RSU_YAW),
+                    ogm_parameters=dict(
+                        z_filter=dict(lower_exclusive=Z_MIN_WORLD, upper_exclusive=Z_MAX_WORLD),
+                        free_logodds=L_FREE, ego_free_scale=1.0,
+                        rsu_free_scale=RSU_FREE_SCALE, occupied_logodds=L_OCC,
+                        logodds_clip=[L_MIN, L_MAX],
+                        known_thresholds=dict(occupied=OCC_TH, free=FREE_TH),
+                    ),
+                ),
+                free_space_height_slab=args.phase1_free_ray,
+            )
+
+        if args.phase1a_paired_diagnostics:
+            if args.phase1_free_ray:
+                raise ValueError("--phase1a-paired-diagnostics cannot be combined with deprecated --phase1-free-ray")
+            from ogm_project.grid_contract import runtime_grid_metadata, GridContract
+            from ogm_project.risk_priority import load_road_mask
+            from ogm_project.phase1a_paired import Phase1aPairedComparison
+            road_mask_path = args.ogm_diagnostics_road_mask or args.priority_mask
+            road_metadata_path = (args.ogm_diagnostics_road_mask_metadata or
+                                  args.priority_mask_metadata)
+            if not road_mask_path or not road_metadata_path:
+                raise ValueError("--phase1a-paired-diagnostics requires a Road Mask and metadata")
+            paired_grid_metadata = runtime_grid_metadata(
+                map_name=world.get_map().name.replace('\\', '/').split('/')[-1],
+                origin_x=ORIGIN_X, origin_y=ORIGIN_Y, x_min=X_MIN, x_max=X_MAX,
+                y_min=Y_MIN, y_max=Y_MAX, resolution=RES, nx=nx, ny=ny)
+            paired_grid = GridContract.from_metadata(paired_grid_metadata)
+            paired_road, _ = load_road_mask(road_mask_path, road_metadata_path, paired_grid)
+            phase1a_paired = Phase1aPairedComparison(
+                os.path.join(run_dir, "phase1a_paired"), paired_grid, paired_road,
+                z_min=Z_MIN_WORLD, z_max=Z_MAX_WORLD, lidar_range=LIDAR_RANGE,
+                free_logodds=L_FREE, occupied_logodds=L_OCC,
+                logodds_min=L_MIN, logodds_max=L_MAX,
+                world_to_grid=world_to_grid, in_bounds=in_bounds, bresenham=bresenham,
+                experiment=dict(scenario_id=args.scenario,
+                                map_name=world.get_map().name.replace('\\', '/').split('/')[-1],
+                                fixed_delta_seconds=FIXED_DELTA,
+                                ego_initial_pose=dict(x=spawn.location.x, y=spawn.location.y,
+                                                      z=spawn.location.z, yaw=spawn.rotation.yaw),
+                                rsu_pose=dict(x=RSU_LIDAR_X, y=RSU_LIDAR_Y, z=RSU_LIDAR_Z,
+                                              pitch=RSU_PITCH, yaw=RSU_YAW)))
+
         # === 固定オブジェクト ===
         if USE_FIXED_OBJECTS and FIXED_OBJECTS:
             print(f"[FIXED] spawning {len(FIXED_OBJECTS)} fixed objects...")
@@ -912,12 +1074,13 @@ def main():
 
         # === Ego LiDAR ===
         lidar_bp = bp.find('sensor.lidar.ray_cast')
-        for k, v in {
+        lidar_explicit_attributes = {
             'channels': LIDAR_CHANNELS,
             'range': LIDAR_RANGE,
             'rotation_frequency': LIDAR_ROT_HZ,
             'points_per_second': LIDAR_PPS,
-        }.items():
+        }
+        for k, v in lidar_explicit_attributes.items():
             lidar_bp.set_attribute(str(k), str(v))
         lidar_ego = world.spawn_actor(
             lidar_bp,
@@ -934,12 +1097,7 @@ def main():
 
         # === RSU LiDAR（固定） ===
         lidar_bp_rsu = bp.find('sensor.lidar.ray_cast')
-        for k, v in {
-            'channels': LIDAR_CHANNELS,
-            'range': LIDAR_RANGE,
-            'rotation_frequency': LIDAR_ROT_HZ,
-            'points_per_second': LIDAR_PPS,
-        }.items():
+        for k, v in lidar_explicit_attributes.items():
             lidar_bp_rsu.set_attribute(str(k), str(v))
         rsu_tf = carla.Transform(
             carla.Location(x=RSU_LIDAR_X, y=RSU_LIDAR_Y, z=RSU_LIDAR_Z),
@@ -947,6 +1105,14 @@ def main():
         )
         lidar_rsu = world.spawn_actor(lidar_bp_rsu, rsu_tf)
         sensors.append(lidar_rsu)
+
+        if diagnostics is not None:
+            from ogm_project.ogm_diagnostics import blueprint_attributes
+            explicit = set(lidar_explicit_attributes)
+            diagnostics.set_lidar_config({
+                "ego": blueprint_attributes(lidar_bp, explicit),
+                "rsu": blueprint_attributes(lidar_bp_rsu, explicit),
+            })
 
         rsu_loc = rsu_tf.location
         ix0, iy0 = world_to_grid(rsu_loc.x, rsu_loc.y)
@@ -962,7 +1128,13 @@ def main():
         def on_ego(meas: carla.LidarMeasurement):
             nonlocal last_time_ego, ego_points_all
             now = time.time()
-            decay_logodds(logodds_ego, now - last_time_ego, DECAY_PER_SEC_EGO)
+            dt_decay = now - last_time_ego
+            apply_decay(logodds_ego, dt_decay, ego_ogm_config)
+            if ogm_engine_shadow is not None:
+                ogm_engine_shadow.decay("ego", dt_decay)
+            if phase1a_paired is not None:
+                phase1a_paired.decay("ego", dt_decay, DECAY_PER_SEC_EGO,
+                                     common_decay_with_runtime_rate)
             last_time_ego = now
 
             arr = np.frombuffer(meas.raw_data, dtype=np.float32).reshape(-1, 4)[:, :3]
@@ -970,56 +1142,109 @@ def main():
             ego_tf = vehicle.get_transform()
 
             pts_world = transform_to_world(arr, lidar_tf)
-            mask_h = (pts_world[:, 2] > Z_MIN_WORLD) & (pts_world[:, 2] < Z_MAX_WORLD)
+            pts_world_all = pts_world
+            mask_h = z_filter_mask(pts_world, ego_ogm_config)
+            origin_loc = lidar_tf.location
+            origin_xy = (origin_loc.x, origin_loc.y)
+            origin_xyz = (origin_loc.x, origin_loc.y, origin_loc.z)
             pts_world = pts_world[mask_h]
+            if ogm_engine_shadow is not None:
+                ogm_engine_shadow.update("ego", pts_world_all[:, :3], origin_xyz)
 
             if pts_world.size > 0:
                 pts_ego = transform_world_to_ego(pts_world, ego_tf)
                 ego_points_all.append(pts_ego[:, :3].copy())
 
-                origin_loc = lidar_tf.location
-                origin_xy = (origin_loc.x, origin_loc.y)
-                update_from_points(pts_world[:, :3], origin_xy, logodds_ego, free_scale=1.0)
+            if args.phase1_free_ray:
+                from ogm_project.height_slab_free_space import update_from_points_height_slab
+                update_from_points_height_slab(
+                    pts_world_all[:, :3], origin_xyz, logodds_ego,
+                    z_min=Z_MIN_WORLD, z_max=Z_MAX_WORLD, lidar_range=LIDAR_RANGE,
+                    free_logodds=L_FREE, occupied_logodds=L_OCC, free_scale=1.0,
+                    logodds_min=L_MIN, logodds_max=L_MAX,
+                    world_to_grid=world_to_grid, in_bounds=in_bounds, bresenham=bresenham)
+            else:
+                update_lidar_measurement(
+                    logodds_ego, pts_world_all[:, :3], origin_xyz,
+                    ogm_grid_contract, ego_ogm_config)
+            if phase1a_paired is not None:
+                phase1a_paired.update(
+                    "ego", pts_world_all[:, :3], mask_h, origin_xyz, 1.0,
+                    update_from_points, frame=meas.frame, timestamp=meas.timestamp)
+            if diagnostics is not None:
+                diagnostics.observe_measurement(
+                    "ego", carla_frame=meas.frame, timestamp=meas.timestamp,
+                    raw_return_count=arr.shape[0], points_world=pts_world_all,
+                    z_pass_mask=mask_h, origin_xy_world=origin_xy,
+                    origin_xyz_world=origin_xyz)
 
         def on_rsu(meas: carla.LidarMeasurement):
             nonlocal rsu_points_all, last_time_rsu
             now = time.time()
-            decay_logodds(logodds_rsu_local, now - last_time_rsu, DECAY_PER_SEC_RSU)
+            dt_decay = now - last_time_rsu
+            apply_decay(logodds_rsu_local, dt_decay, rsu_ogm_config)
+            if ogm_engine_shadow is not None:
+                ogm_engine_shadow.decay("rsu", dt_decay)
+            if phase1a_paired is not None:
+                phase1a_paired.decay("rsu", dt_decay, DECAY_PER_SEC_RSU,
+                                     common_decay_with_runtime_rate)
             last_time_rsu = now
 
             arr = np.frombuffer(meas.raw_data, dtype=np.float32).reshape(-1, 4)[:, :3]
             rsu_tf_now = lidar_rsu.get_transform()
             pts_world = transform_to_world(arr, rsu_tf_now)
-            mask_h = (pts_world[:, 2] > Z_MIN_WORLD) & (pts_world[:, 2] < Z_MAX_WORLD)
+            pts_world_all = pts_world
+            mask_h = z_filter_mask(pts_world, rsu_ogm_config)
+            rsu_loc_world = rsu_tf_now.location
+            origin_xy = (rsu_loc_world.x, rsu_loc_world.y)
+            origin_xyz = (rsu_loc_world.x, rsu_loc_world.y, rsu_loc_world.z)
             pts_world = pts_world[mask_h]
+            if ogm_engine_shadow is not None:
+                ogm_engine_shadow.update("rsu", pts_world_all[:, :3], origin_xyz)
 
             if pts_world.size > 0:
                 ego_tf = vehicle.get_transform()
                 pts_ego = transform_world_to_ego(pts_world, ego_tf)
                 rsu_points_all.append(pts_ego[:, :3].copy())
 
-                rsu_loc_world = rsu_tf_now.location
-                origin_xy = (rsu_loc_world.x, rsu_loc_world.y)
-                update_from_points_with_origin(
-                    pts_world[:, :3],
-                    origin_xy,
-                    logodds_rsu_local,
-                    free_scale=RSU_FREE_SCALE,
-                    static_mask_arr=static_mask
-                )
+            if args.phase1_free_ray:
+                from ogm_project.height_slab_free_space import update_from_points_height_slab
+                update_from_points_height_slab(
+                    pts_world_all[:, :3], origin_xyz, logodds_rsu_local,
+                    z_min=Z_MIN_WORLD, z_max=Z_MAX_WORLD, lidar_range=LIDAR_RANGE,
+                    free_logodds=L_FREE, occupied_logodds=L_OCC,
+                    free_scale=RSU_FREE_SCALE, logodds_min=L_MIN, logodds_max=L_MAX,
+                    world_to_grid=world_to_grid, in_bounds=in_bounds, bresenham=bresenham)
+            else:
+                update_lidar_measurement(
+                    logodds_rsu_local, pts_world_all[:, :3], origin_xyz,
+                    ogm_grid_contract, rsu_ogm_config)
+            if phase1a_paired is not None:
+                phase1a_paired.update(
+                    "rsu", pts_world_all[:, :3], mask_h, origin_xyz, RSU_FREE_SCALE,
+                    update_from_points, frame=meas.frame, timestamp=meas.timestamp)
+            if diagnostics is not None:
+                diagnostics.observe_measurement(
+                    "rsu", carla_frame=meas.frame, timestamp=meas.timestamp,
+                    raw_return_count=arr.shape[0], points_world=pts_world_all,
+                    z_pass_mask=mask_h, origin_xy_world=origin_xy,
+                    origin_xyz_world=origin_xyz)
 
-        def safe_listen(cb):
+        def safe_listen(cb, sensor_name):
             def _w(meas):
                 try:
-                    cb(meas)
+                    if priority_debug is None:
+                        cb(meas)
+                    else:
+                        priority_debug.callback(sensor_name, cb, meas)
                 except Exception as e:
                     import traceback
                     print("[ERROR][callback]", e)
                     traceback.print_exc()
             return _w
 
-        lidar_ego.listen(safe_listen(on_ego))
-        lidar_rsu.listen(safe_listen(on_rsu))
+        lidar_ego.listen(safe_listen(on_ego, "ego"))
+        lidar_rsu.listen(safe_listen(on_rsu, "rsu"))
 
         # --- ループ ---
         t0 = time.time()
@@ -1067,6 +1292,8 @@ def main():
                     w_comm.writerow([f"{sim_time:.3f}", ch.tx_bytes, ch.rx_bytes, len(ch.queue)])
 
                     if tick_idx % SNAPSHOT_EVERY_N_TICKS == 0:
+                        if priority_debug is not None:
+                            priority_debug.save_if_ready(logodds_ego, logodds_rsu_local)
                         base = f"t{snap_idx:04d}"
                         ego_png   = os.path.join(ego_dir,   f"{base}.png")
                         rsu_png   = os.path.join(rsu_dir,   f"{base}.png")
@@ -1111,7 +1338,45 @@ def main():
             except:
                 pass
 
+        if diagnostics is not None:
+            from ogm_project.actor_ground_truth import vehicle_footprint_mask
+            gt_occupied_mask, gt_vehicle_count = vehicle_footprint_mask(
+                actors, (ny, nx), world_to_grid)
+            diagnostics.experiment["vehicle_gt_actor_count"] = gt_vehicle_count
+            diagnostic_summary = diagnostics.finalize(
+                logodds_ego, logodds_rsu_local, gt_occupied_mask=gt_occupied_mask)
+            print("[DIAGNOSTICS] Saved:", os.path.join(run_dir, "diagnostics"))
+            print("[DIAGNOSTICS] OGM unchanged by finalization:", diagnostic_summary["invariance"])
+            if args.phase1_free_ray and args.phase1_compare_baseline:
+                from ogm_project.phase1_comparison import compare_phase_runs
+                comparison = compare_phase_runs(
+                    args.phase1_compare_baseline,
+                    os.path.join(run_dir, "diagnostics"),
+                    os.path.join(run_dir, "diagnostics"),
+                )
+                print("[PHASE1] Comparison:", comparison)
+
+        if phase1a_paired is not None:
+            from ogm_project.actor_ground_truth import vehicle_footprint_masks
+            _, gt_actor_masks = vehicle_footprint_masks(actors, (ny, nx), world_to_grid)
+            paired_result = phase1a_paired.finalize(
+                logodds_ego, logodds_rsu_local, gt_actor_masks)
+            print("[PHASE1A] Saved:", os.path.join(run_dir, "phase1a_paired"))
+            print("[PHASE1A] paired_same_measurements:", paired_result["paired_same_measurements"])
+            print("[PHASE1A] paired_same_decay:", paired_result["paired_same_decay"])
+
+        if ogm_engine_shadow is not None:
+            shadow_result = ogm_engine_shadow.finalize(
+                encode_grid=encode_grid_q8, fuse=fuse_logodds_prefer_ego,
+                production_ego=logodds_ego, production_rsu=logodds_rsu_local)
+            print("[OGM ENGINE SHADOW] Saved:", os.path.join(run_dir, "ogm_engine_shadow"))
+            print("[OGM ENGINE SHADOW] all_pass:", shadow_result["all_pass"])
+
         # --- 最終スナップショット ---
+        if priority_debug is not None:
+            priority_debug.save_if_ready(logodds_ego, logodds_rsu_local)
+            if not priority_debug.saved:
+                print("[PRIORITY] Snapshot not saved: no matching completed Ego/RSU sensor frame.")
         ego_path   = os.path.join(ego_dir,   f"final_{RUN_TAG}.png")
         rsu_path   = os.path.join(rsu_dir,   f"final_{RUN_TAG}.png")
         fused_path = os.path.join(fused_dir, f"final_{RUN_TAG}.png")
