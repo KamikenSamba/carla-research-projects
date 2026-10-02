@@ -183,4 +183,3 @@ def transforms_reproducible(a, b, *, xy_tolerance=.001, z_tolerance=.001,
     passed = (delta["x"] <= xy_tolerance and delta["y"] <= xy_tolerance and
               delta["z"] <= z_tolerance and delta["yaw"] <= yaw_tolerance)
     return passed, delta
-

@@ -1,6 +1,6 @@
 # Phase 1b.6 Common OGM Engine 結果
 
-実施日: 2026-09-29  
+実施日: 2026-09-29
 scenario: `priority_crossing_v1`（CURRENT、Target/Egoの接地変更なし）
 
 ## 判定
@@ -72,4 +72,3 @@ Phase 1b解析のEgo 46 / RSU 60と一致する。scenario z、GT、height slab�
 ## 次段階
 
 Phase 1b.6はREADYであるため、次は1要因ずつ進める原則に従い、**Phase 1b.7: Grounded Scenario Baseline確定**を提案する。本Phaseでは接地修正を実施していない。
-

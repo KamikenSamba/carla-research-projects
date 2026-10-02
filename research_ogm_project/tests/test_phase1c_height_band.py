@@ -111,4 +111,3 @@ def test_official_target_and_road_metrics_follow_mask_definitions(official_repla
     road_new = replay.road & (replay.labels0 == 1) & (labels == 0)
     assert int(target_new.sum()) == candidate_result.metrics["target_new_false_free"]
     assert int(road_new.sum()) == candidate_result.metrics["road_unknown_to_free"]
-

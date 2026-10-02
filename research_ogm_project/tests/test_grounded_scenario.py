@@ -65,4 +65,3 @@ def test_calibration_artifact_has_distinct_provenance_hash():
     grounding=load("priority_crossing_v2_grounded.json")["grounding"]
     assert len(grounding["calibration_artifact_sha256"])==64
     assert grounding["calibration_artifact_sha256"]!=grounding["source_legacy_config_sha256"]
-

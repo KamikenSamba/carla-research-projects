@@ -1,6 +1,6 @@
 # Future Risk × Cooperative OGM 実 CARLA 統合検証
 
-実施日: 2026-09-27  
+実施日: 2026-09-27
 Evidence: `D:\CARLA_DATA\DT_RiskPrediction\04_evidence\communication_priority_real_integration_20260927\final_run`
 
 ## 結論

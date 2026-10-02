@@ -71,4 +71,3 @@ Phase 1aのpaired診断もvalid-returnとrejected-return extra FreeをCommon Eng
 `shadow_comparison.json` にgrid・label・intermediate counts・communication payload・fusion・EgoUnknown・RSUKnown・Priorityの一致を保存する。`legacy_update_from_points_reference` と `legacy_decay_logodds_reference` は回帰用として残してあり、production callbackからは呼ばない。
 
 Ego-only `SparseWorldOGM` は別契約（疎WORLD grid、異なるz上限/range/clipping/decay timing）なのでPhase 1b.6のmigration対象外である。詳細は [変更前監査](ogm_engine_unification_audit.md) を参照する。
-

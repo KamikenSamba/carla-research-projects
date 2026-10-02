@@ -184,4 +184,3 @@ class OGMEngineShadowComparison:
         (self.output_dir/"shadow_comparison.json").write_text(
             json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
         return result
-

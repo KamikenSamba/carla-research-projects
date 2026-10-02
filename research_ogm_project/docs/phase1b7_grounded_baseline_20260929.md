@@ -1,7 +1,7 @@
 # Phase 1b.7 Grounded Scenario Baseline
 
-実施日: 2026-09-29  
-正式scenario: `priority_crossing_v2_grounded`  
+実施日: 2026-09-29
+正式scenario: `priority_crossing_v2_grounded`
 正式artifact: `D:\CARLA_DATA\outputs\priority_crossing_v2_grounded_20260929_r2`
 
 ## 判定
@@ -150,4 +150,3 @@ RiskはGrounded actor stateから再生成し、旧floating metadataとは混在
 ## M–O. テストと次Phase
 
 `python -m pytest -q`: **136 passed / 0 failed**。Grounded artifact auditも全項目PASSしたため、本baselineをPhase 1c以降の正式入力とする。次は **Phase 1c: Grounded baselineで残るRSU False Freeへの対策** を提案する。
-

@@ -208,4 +208,3 @@ class GroundedRSUReplay:
         counts={cause:0 for cause in CAUSES}
         for rows in by_cell.values():counts[aggregate_cell(rows)["cause_class"]]+=1
         return {"new_false_free_cells":int(new.sum()),"classified_cells":len(by_cell),"cause":counts}
-

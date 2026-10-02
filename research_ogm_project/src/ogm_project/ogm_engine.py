@@ -229,4 +229,3 @@ def classify_logodds(logodds: np.ndarray, config: OGMUpdateConfig) -> np.ndarray
     labels[free] = 1
     labels[occupied] = 2
     return labels
-
