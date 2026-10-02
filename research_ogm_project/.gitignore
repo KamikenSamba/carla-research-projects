@@ -1,0 +1,69 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments and packaging output
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+*.whl
+
+# IDE and OS files
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials*.json
+secrets*.json
+
+# Runtime state and logs
+*.log
+*.pid
+carla_server_pid.txt
+
+# Generated experiment output directories
+/outputs/
+/out_grids/
+/results/
+/artifacts/
+/logs/
+
+# Large generated research artifacts
+*.npy
+*.npz
+*.ply
+*.pcd
+*.las
+*.laz
+*.bag
+*.mp4
+*.avi
+*.mkv
+*.pt
+*.pth
+*.ckpt
+*.onnx
