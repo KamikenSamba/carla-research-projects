@@ -6,7 +6,7 @@
 
 このリポジトリには、著者が管理する研究用プログラムと設定ファイルのみを含める。外部から受領した参照実装、学習済みモデル、実験ログ、生成データは含めない。
 
-現在の公開・追跡対象は、CARLA上で占有グリッドマップ、Ego OGM、協調認識、静的マスク生成を実行するための自作研究コードである。
+現在の公開・追跡対象は、CARLA上で占有グリッドマップ、Ego OGM、協調認識、静的マスク生成を実行する自作研究コードと、`dt_risk_prediction_project/` の自作DTリスク予測ツールである。
 
 ### 構成
 
@@ -24,6 +24,16 @@
 ```
 
 `legacy/` には、整理済みコードの比較・互換実行に使う既存OGMスクリプトを保持する。通常の実行入口は `scripts/` と `src/` 配下である。
+
+`carla_simulate_project/` は外部参照実装としてローカル保持のみにし、GitHubへ追加しない。
+
+### 開発フロー
+
+```text
+Issue → branch → Codex実装 → test/構文確認 → diff確認 → commit → push → PR → CI → review → Squash merge → local main同期
+```
+
+詳細は `AGENTS.md` と `docs/WORKFLOW.md` を参照する。branchは `feature/`、`fix/`、`refactor/`、`docs/`、`chore/`、`experiment/` を使用し、`main`へ直接commitしない。
 
 ### 実行方法
 
@@ -59,7 +69,7 @@ python scripts\run_ego_ogm.py --scenario-file configs\scenarios.json --scenario 
 
 This repository contains only research code and configuration files maintained by the author. External reference implementations, trained models, experiment logs, and generated data are excluded.
 
-The currently tracked project is the author-maintained CARLA OGM research code for occupancy grid maps, Ego OGM, cooperative perception, and static mask generation.
+The tracked scope contains the author-maintained CARLA OGM research code and the author-maintained DT risk-prediction tools under `dt_risk_prediction_project/`.
 
 ### Structure
 
@@ -77,6 +87,12 @@ The currently tracked project is the author-maintained CARLA OGM research code f
 ```
 
 The `legacy/` directory keeps existing OGM scripts for comparison and compatibility execution. Normal entry points are under `scripts/` and `src/`.
+
+`carla_simulate_project/` is a local-only external reference implementation and must not be added to GitHub.
+
+### Development workflow
+
+Use Issue → branch → implementation → offline/local checks → diff review → commit → push → Pull Request → CI → review → Squash merge → local `main` sync. See `AGENTS.md` and `docs/WORKFLOW.md` for details.
 
 ### How to Run
 
