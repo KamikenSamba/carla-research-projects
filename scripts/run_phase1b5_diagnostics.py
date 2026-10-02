@@ -16,7 +16,8 @@ from run_real_priority_integration import (spawn_vehicle,lidar_blueprint,take_fr
 from ogm_project.actor_ground_truth import vehicle_footprint_masks
 from ogm_project.phase1a_paired import Phase1aPairedComparison
 from ogm_project.phase1b_geometry import segment_box_interval
-from ogm_project.phase1b5_diagnostics import clearance,SettleMonitor,transform_record,classify_query
+from ogm_project.phase1b5_diagnostics import (clearance,SettleMonitor,transform_record,classify_query,
+    query_hits,infer_target_hit)
 from analyze_phase1b import write_json,write_csv,xyz_fields
 
 
@@ -37,38 +38,6 @@ def actor_geometry(actor):
     return dict(actor_id=actor.id,actor_type=actor.type_id,actor_matrix=tf.get_matrix(),
         box_matrix=matrix.tolist(),extent=vector(box.extent),
         vertices=[vector(v) for v in box.get_world_vertices(tf)])
-
-
-def query_hits(world,start,end):
-    available=hasattr(world,'cast_ray')
-    if not available:return dict(available=False,hits=[],project_available=False,project_hit=None)
-    try:
-        hits=[dict(location=vector(h.location),label=str(h.label),
-                   distance=float(np.linalg.norm(np.array(vector(h.location))-start)))
-              for h in world.cast_ray(location(start),location(end))]
-        hits.sort(key=lambda h:h['distance'])
-        length=float(np.linalg.norm(np.asarray(end)-start))
-        project=None
-        if hasattr(world,'project_point') and length>0:
-            h=world.project_point(location(start),carla.Vector3D(*map(float,np.asarray(end)-start)),length)
-            if h is not None:project=dict(location=vector(h.location),label=str(h.label),
-                distance=float(np.linalg.norm(np.array(vector(h.location))-start)))
-        return dict(available=True,hits=hits,project_available=hasattr(world,'project_point'),project_hit=project)
-    except RuntimeError as exc:
-        return dict(available=False,hits=[],project_available=False,project_hit=None,error=str(exc))
-
-
-def infer_target_hit(hit,geometry,all_vehicles):
-    """LabelledPoint has no actor ID. Preserve this explicitly as inference."""
-    if hit is None:return False
-    if hit['label'] not in ('Car','Truck','Bus','Motorcycle','Bicycle'):return False
-    p=np.asarray(hit['location']);candidates=[]
-    for box in all_vehicles:
-        local=(np.linalg.inv(box['box_matrix'])@np.r_[p,1])[:3]
-        if np.all(abs(local)<=np.array(box['extent'])+.02):candidates.append(box['actor_id'])
-    if candidates==[geometry['actor_id']]:return True
-    if not candidates or len(candidates)>1:return None
-    return False
 
 
 def ground_probe(world,target,variant):

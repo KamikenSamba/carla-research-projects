@@ -38,6 +38,40 @@ def transform_record(transform):
     return result
 
 
+def query_hits(world,start,end):
+    available=hasattr(world,'cast_ray')
+    if not available:return dict(available=False,hits=[],project_available=False,project_hit=None)
+    import carla
+    location=lambda xyz:carla.Location(x=float(xyz[0]),y=float(xyz[1]),z=float(xyz[2]))
+    try:
+        hits=[dict(location=[float(h.location.x),float(h.location.y),float(h.location.z)],label=str(h.label),
+                   distance=float(np.linalg.norm(np.array([h.location.x,h.location.y,h.location.z])-start)))
+              for h in world.cast_ray(location(start),location(end))]
+        hits.sort(key=lambda h:h['distance'])
+        length=float(np.linalg.norm(np.asarray(end)-start))
+        project=None
+        if hasattr(world,'project_point') and length>0:
+            h=world.project_point(location(start),carla.Vector3D(*map(float,np.asarray(end)-start)),length)
+            if h is not None:project=dict(location=[float(h.location.x),float(h.location.y),float(h.location.z)],label=str(h.label),
+                distance=float(np.linalg.norm(np.array([h.location.x,h.location.y,h.location.z])-start)))
+        return dict(available=True,hits=hits,project_available=hasattr(world,'project_point'),project_hit=project)
+    except RuntimeError as exc:
+        return dict(available=False,hits=[],project_available=False,project_hit=None,error=str(exc))
+
+
+def infer_target_hit(hit,geometry,all_vehicles):
+    """LabelledPoint has no actor ID. Preserve this explicitly as inference."""
+    if hit is None:return False
+    if hit['label'] not in ('Car','Truck','Bus','Motorcycle','Bicycle'):return False
+    p=np.asarray(hit['location']);candidates=[]
+    for box in all_vehicles:
+        local=(np.linalg.inv(box['box_matrix'])@np.r_[p,1])[:3]
+        if np.all(abs(local)<=np.array(box['extent'])+.02):candidates.append(box['actor_id'])
+    if candidates==[geometry['actor_id']]:return True
+    if not candidates or len(candidates)>1:return None
+    return False
+
+
 def classify_query(*,available,same_frame,first_hit_is_target,first_hit_distance,
                    target_exit_distance,endpoint_distance):
     """A query blocked before the box does not demonstrate box-only geometry."""

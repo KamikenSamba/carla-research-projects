@@ -7,7 +7,8 @@ import pytest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from ogm_project.phase1b5_diagnostics import clearance,SettleMonitor,transform_record,classify_query,variant_sensor_summary
+from ogm_project.phase1b5_diagnostics import (clearance,SettleMonitor,transform_record,classify_query,
+    variant_sensor_summary,query_hits,infer_target_hit)
 
 
 @pytest.mark.parametrize('bottom,road,expected',[(.6,.0002,.5998),(.0001,.0002,-.0001),(0,0,0)])
@@ -79,12 +80,10 @@ def test_diagnostic_numeric_functions_have_no_ogm_side_effects():
 
 
 def test_query_api_unavailable_returns_explicit_status():
-    from run_phase1b5_diagnostics import query_hits
     assert query_hits(object(),np.array([0.,0.,0.]),np.array([1.,0.,0.]))['available'] is False
 
 
 def test_actor_identity_is_inferred_only_for_unique_vehicle_label():
-    from run_phase1b5_diagnostics import infer_target_hit
     box=dict(actor_id=42,box_matrix=np.eye(4).tolist(),extent=[1,1,1])
     assert infer_target_hit(dict(label='Car',location=[0,0,0]),box,[box]) is True
     assert infer_target_hit(dict(label='Roads',location=[0,0,0]),box,[box]) is False
