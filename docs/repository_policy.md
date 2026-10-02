@@ -16,7 +16,8 @@
 | リポジトリ説明 | `README.md` | GitHubで追跡する |
 | 管理方針 | `docs/repository_policy.md` | GitHubで追跡する |
 | 外部参照実装 | `carla_simulate_project/` | ローカル保持のみ |
-| DTリスク予測再現作業 | `dt_risk_prediction_project/`, `docs/dt_risk_prediction/` | ローカル保持のみ |
+| 自作DTリスク予測ツール | `dt_risk_prediction_project/` | GitHubで追跡する |
+| DTリスク予測のローカル資料・生成物 | `docs/dt_risk_prediction/` | ローカル保持のみ |
 | 生成データ | データ保存先ディレクトリ | GitHubへ含めない |
 
 ### 実行方法
@@ -68,7 +69,8 @@ External reference implementations, senior research code, trained models, experi
 | Repository overview | `README.md` | Tracked on GitHub |
 | Management policy | `docs/repository_policy.md` | Tracked on GitHub |
 | External reference implementation | `carla_simulate_project/` | Local only |
-| DT risk reproduction work | `dt_risk_prediction_project/`, `docs/dt_risk_prediction/` | Local only |
+| Author-maintained DT risk-prediction tools | `dt_risk_prediction_project/` | Tracked on GitHub |
+| Local DT risk reference material and outputs | `docs/dt_risk_prediction/` | Local only |
 | Generated data | Data output directories | Excluded from GitHub |
 
 ### How to Run
