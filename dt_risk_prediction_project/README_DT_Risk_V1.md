@@ -194,3 +194,7 @@ road_mask -> ego_unknown -> rsu_known -> risk_mask
 - risk event が 0 件でも、再構成と未来シミュレーションが正常に動いたかは
   `summary.json` と `prediction_states.csv` で確認してください。
 - 既存 OGM スクリプトは変更していません。
+
+## IDM prediction extension
+
+V1 remains the TM baseline. See [V2 IDM / TM documentation](README_DT_Risk_V2_IDM.md) for the separate runner, per-actor headway traits and offline tests.
