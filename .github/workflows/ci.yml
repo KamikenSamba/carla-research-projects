@@ -79,4 +79,6 @@ jobs:
         run: python -m pytest -q dt_risk_prediction_project/tests
 
       - name: Validate experiment configuration without CARLA
-        run: python dt_risk_prediction_project/Run_IDM_Following_Experiment.py
+        run: |
+          python dt_risk_prediction_project/Run_IDM_Following_Experiment.py
+          python dt_risk_prediction_project/Run_IDM_Following_Experiment.py --config dt_risk_prediction_project/configs/idm_normal_stage1.json
