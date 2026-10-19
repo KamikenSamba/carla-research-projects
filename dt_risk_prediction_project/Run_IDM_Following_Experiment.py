@@ -15,11 +15,11 @@ from idm_harness_host import HealthGate, PortOwnership, listener_pids, process_a
 from idm_experiment_harness import Harness, save
 
 
-def source_metadata():
+def source_metadata(extra_files=()):
     root=Path(__file__).resolve().parent
     payload=dict(source_sha256={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in
                  [root/name for name in ('Run_IDM_Following_Experiment.py','idm_experiment_harness.py',
-                  'idm_harness_config.py','idm_harness_host.py','idm_context.py','idm_normal_stage1.py')]})
+                  'idm_harness_config.py','idm_harness_host.py','idm_context.py','idm_normal_stage1.py',*extra_files)]})
     try:
         payload['source_commit']=subprocess.run(['git','rev-parse','HEAD'],cwd=root,
             check=True,capture_output=True,text=True,timeout=5).stdout.strip()
@@ -53,7 +53,7 @@ def classify_exit(code, result, server_lost=False):
     return result['status'], code
 
 
-def supervise(args, scenario):
+def supervise(args, scenario, *, entrypoint=None, source_files=(), verify_completed=None):
     if hasattr(scenario,'require_executable'):
         scenario.require_executable(args.stage)
     stage_gate(args.stage, scenario, args.stage1_result)
@@ -70,12 +70,13 @@ def supervise(args, scenario):
         try:
             directory = Path(tempfile.mkdtemp(prefix="idm_harness_",dir=root))
             marker = directory/'halt_rpc'
+            metadata=source_metadata(extra_files=source_files) if source_files else source_metadata()
             save(directory/'launch.json',dict(stage=args.stage,server_pid=args.server_pid,
                  supervisor_pid=os.getpid(),config_sha256=scenario.fingerprint,
                  config_file_sha256=hashlib.sha256(args.config.read_bytes()).hexdigest(),
                  stage1_result=str(args.stage1_result) if args.stage1_result else None,
-                 **source_metadata()))
-            command = [sys.executable,'-X','utf8','-X','faulthandler',str(Path(__file__).resolve()),
+                 **metadata))
+            command = [sys.executable,'-X','utf8','-X','faulthandler',str(Path(entrypoint or __file__).resolve()),
                        '--worker','--config',str(args.config.resolve()),'--stage',args.stage,
                        '--run-dir',str(directory),'--server-pid',str(args.server_pid),
                        '--supervisor-pid',str(os.getpid()),'--port',str(args.port)]
@@ -124,6 +125,11 @@ def supervise(args, scenario):
                 final.update(status='worker_timeout',exit_code=6)
             if status=='native_abnormal_exit':
                 final.update(cleanup_verified=False,reason='native worker exit; supervisor sends no CARLA RPC')
+            if verify_completed and final['status']=='completed':
+                try:verify_completed(directory,final)
+                except (ValueError,OSError,KeyError,TypeError) as exc:
+                    final.update(status='invalid_result',exit_code=1,calibration_valid=False,
+                                 reason='offline output verification failed: '+str(exc))
             save(directory/'result.json',final)
             print(json.dumps(dict(run_dir=str(directory),**final),indent=2))
             return final['exit_code']
