@@ -174,65 +174,7 @@ class Harness:
         if self.normal_safety:
             c.require_executable(self.stage)  # before the first CARLA RPC, even for direct workers
             save(self.directory/'distance_budget.json',c.distance_report())
-        self.world = self.call(self.client.get_world)
-        versions = [self.call(self.client.get_client_version), self.call(self.client.get_server_version)]
-        self.fail_if(versions != ["0.9.16", "0.9.16"], "version_mismatch")
-        self.map = self.call(self.world.get_map)
-        self.fail_if(self.map.name.split("/")[-1] != c.map_name, "map_mismatch")
-        if self.normal_safety:
-            import hashlib
-            actual_hash=hashlib.sha256(self.call(self.map.to_opendrive).encode()).hexdigest()
-            self.fail_if(actual_hash!=c.route_audit['opendrive_sha256'],'route_map_hash_mismatch')
-        self.original = self.call(self.world.get_settings)
-        self.fail_if(self.original.synchronous_mode, "world_already_synchronous")
-        actors = list(self.call(self.world.get_actors))
-        self.initial_ids = {a.id for a in actors}
-        self.fail_if(any(a.type_id.startswith(("vehicle.", "walker.", "sensor.", "controller."))
-                         for a in actors), "external_dynamic_actors_present")
-        self.route = []
-        for s in range(int(c.follower_s), int(c.end_s) - 1, -1):
-            wp = self.map.get_waypoint_xodr(c.road, c.lane, s)
-            self.fail_if(wp is None or (wp.road_id, wp.section_id, wp.lane_id) != (c.road, c.section, c.lane)
-                         or wp.is_junction or wp.lane_width < 3.4, "route_preflight_failed")
-            if self.normal_safety:
-                self.fail_if(wp.lane_type!=self.api.LaneType.Driving,'route_not_driving')
-                if self.route:
-                    self.fail_if(abs(wp.transform.location.z-self.route[-1].transform.location.z)>0.02,
-                                 'route_grade')
-            if self.route:
-                delta = (wp.transform.rotation.yaw-self.route[0].transform.rotation.yaw+180)%360-180
-                self.fail_if(abs(delta) > 0.5, "route_not_straight")
-                following = self.route[-1].next(1.0)
-                self.fail_if(len(following) != 1 or following[0].is_junction or
-                             (following[0].road_id, following[0].section_id, following[0].lane_id)
-                             != (c.road, c.section, c.lane), "route_branch")
-                if self.normal_safety:
-                    p,q=following[0].transform.location,wp.transform.location
-                    self.fail_if(math.dist((p.x,p.y,p.z),(q.x,q.y,q.z))>0.1,'route_direction_disconnected')
-            self.route.append(wp)
-        self.fail_if(bool(self.route[0].get_landmarks((c.follower_s-c.end_s+20) if self.normal_safety else 95, stop_at_junction=False)), "regulatory_landmarks")
-        self.path = [(w.transform.location.x, w.transform.location.y) for w in self.route]
-        self.route_length = sum(math.dist(a, b) for a, b in zip(self.path, self.path[1:]))
-        if self.normal_safety:
-            self.fail_if(self.route_length+1e-6<c.planned_route_length,'route_too_short')
-            self.fail_if(any(math.dist((w.transform.location.x,w.transform.location.y,w.transform.location.z),p)>0.1
-                             for w,p in zip(self.route,c.route_audit['points'])),'route_geometry_mismatch')
-        # Parked/static road users may not be vehicle actors. Query their level boxes too.
-        labels = ('Car','Truck','Bus','Motorcycle','Bicycle','Pedestrians')
-        self.fail_if(not hasattr(self.world,'get_level_bbs') or not hasattr(self.api,'CityObjectLabel'),
-                     'obstacle_inventory_unavailable')
-        angle = math.radians(self.route[0].transform.rotation.yaw)
-        ux,uy=math.cos(angle),math.sin(angle)
-        for label in labels:
-            boxes=self.call(self.world.get_level_bbs,getattr(self.api.CityObjectLabel,label))
-            for box in boxes:
-                dx,dy=box.location.x-self.path[0][0],box.location.y-self.path[0][1]
-                along,lateral=dx*ux+dy*uy,abs(-dx*uy+dy*ux)
-                relative=math.radians(box.rotation.yaw)-angle
-                length=abs(math.cos(relative))*box.extent.x+abs(math.sin(relative))*box.extent.y
-                width=abs(math.cos(relative))*box.extent.y+abs(math.sin(relative))*box.extent.x
-                self.fail_if(along+length>=0 and along-length<=self.route_length and lateral-width<=1.75,
-                             'static_road_user_obstacle')
+        versions, actors = self.inspect_world_route(strict=bool(self.normal_safety))
         self.ownership.require_unused()
         self.tm = self.call(self.client.get_trafficmanager, c.tm_port)
         # A fresh worker plus unused->self listener proof excludes an existing Remote TM.
@@ -334,6 +276,70 @@ class Harness:
              tm_port=c.tm_port, tm_owner_pid=os.getpid(), seed_requested=c.seed,
              seed_applied=self.seed_applied, registration_verified=None,
              route_length_m=self.route_length, route=[[x,y] for x,y in self.path]))
+
+    def inspect_world_route(self, *, strict=False):
+        """Read-only preflight shared by following and single-vehicle calibration."""
+        c = self.c
+        self.world = self.call(self.client.get_world)
+        versions = [self.call(self.client.get_client_version), self.call(self.client.get_server_version)]
+        self.fail_if(versions != ["0.9.16", "0.9.16"], "version_mismatch")
+        self.map = self.call(self.world.get_map)
+        self.fail_if(self.map.name.split("/")[-1] != c.map_name, "map_mismatch")
+        if strict:
+            import hashlib
+            actual_hash=hashlib.sha256(self.call(self.map.to_opendrive).encode()).hexdigest()
+            self.fail_if(actual_hash!=c.route_audit['opendrive_sha256'],'route_map_hash_mismatch')
+        self.original = self.call(self.world.get_settings)
+        self.fail_if(self.original.synchronous_mode, "world_already_synchronous")
+        actors = list(self.call(self.world.get_actors))
+        self.initial_ids = {a.id for a in actors}
+        self.fail_if(any(a.type_id.startswith(("vehicle.", "walker.", "sensor.", "controller."))
+                         for a in actors), "external_dynamic_actors_present")
+        self.route = []
+        for s in range(int(c.follower_s), int(c.end_s) - 1, -1):
+            wp = self.map.get_waypoint_xodr(c.road, c.lane, s)
+            self.fail_if(wp is None or (wp.road_id, wp.section_id, wp.lane_id) != (c.road, c.section, c.lane)
+                         or wp.is_junction or wp.lane_width < 3.4, "route_preflight_failed")
+            if strict:
+                self.fail_if(wp.lane_type!=self.api.LaneType.Driving,'route_not_driving')
+                if self.route:
+                    self.fail_if(abs(wp.transform.location.z-self.route[-1].transform.location.z)>0.02,
+                                 'route_grade')
+            if self.route:
+                delta = (wp.transform.rotation.yaw-self.route[0].transform.rotation.yaw+180)%360-180
+                self.fail_if(abs(delta) > 0.5, "route_not_straight")
+                following = self.route[-1].next(1.0)
+                self.fail_if(len(following) != 1 or following[0].is_junction or
+                             (following[0].road_id, following[0].section_id, following[0].lane_id)
+                             != (c.road, c.section, c.lane), "route_branch")
+                if strict:
+                    p,q=following[0].transform.location,wp.transform.location
+                    self.fail_if(math.dist((p.x,p.y,p.z),(q.x,q.y,q.z))>0.1,'route_direction_disconnected')
+            self.route.append(wp)
+        self.fail_if(bool(self.route[0].get_landmarks((c.follower_s-c.end_s+20) if strict else 95, stop_at_junction=False)), "regulatory_landmarks")
+        self.path = [(w.transform.location.x, w.transform.location.y) for w in self.route]
+        self.route_length = sum(math.dist(a, b) for a, b in zip(self.path, self.path[1:]))
+        if strict:
+            self.fail_if(self.route_length+1e-6<c.planned_route_length,'route_too_short')
+            self.fail_if(any(math.dist((w.transform.location.x,w.transform.location.y,w.transform.location.z),p)>0.1
+                             for w,p in zip(self.route,c.route_audit['points'])),'route_geometry_mismatch')
+        # Parked/static road users may not be vehicle actors. Query their level boxes too.
+        labels = ('Car','Truck','Bus','Motorcycle','Bicycle','Pedestrians')
+        self.fail_if(not hasattr(self.world,'get_level_bbs') or not hasattr(self.api,'CityObjectLabel'),
+                     'obstacle_inventory_unavailable')
+        angle = math.radians(self.route[0].transform.rotation.yaw)
+        ux,uy=math.cos(angle),math.sin(angle)
+        for label in labels:
+            boxes=self.call(self.world.get_level_bbs,getattr(self.api.CityObjectLabel,label))
+            for box in boxes:
+                dx,dy=box.location.x-self.path[0][0],box.location.y-self.path[0][1]
+                along,lateral=dx*ux+dy*uy,abs(-dx*uy+dy*ux)
+                relative=math.radians(box.rotation.yaw)-angle
+                length=abs(math.cos(relative))*box.extent.x+abs(math.sin(relative))*box.extent.y
+                width=abs(math.cos(relative))*box.extent.y+abs(math.sin(relative))*box.extent.x
+                self.fail_if(along+length>=0 and along-length<=self.route_length and lateral-width<=1.75,
+                             'static_road_user_obstacle')
+        return versions, actors
 
     def speed_command(self, speed):
         based_on = self.last_frame
@@ -555,7 +561,7 @@ class Harness:
                              'insufficient_following_variation')
             self.result['metrics'] = m
 
-    def cleanup(self):
+    def cleanup(self, *, manage_tm=True):
         audit = dict(attempted=False, destroyed={}, unregistered=[], settings_restored=False,
                      remaining_owned=None, external_actors_preserved=None)
         self.result['cleanup'] = audit
@@ -564,7 +570,8 @@ class Harness:
             return
         try:
             self.gate.check()
-            self.ownership.require_self()
+            if manage_tm:
+                self.ownership.require_self()
             # Do not mutate external objects or tick after observed interleaving.
             self.frame_unchanged()
             audit['attempted'] = True
@@ -576,7 +583,7 @@ class Harness:
             for actor in self.owned.values():
                 audit['destroyed'][str(actor.id)] = (self.command("destroy_owned",actor.destroy,actor=actor.id)
                                                     if actor.id in live_before else True)
-            if self.tm_owned:
+            if manage_tm and self.tm_owned:
                 self.command("tm_sync_release",self.tm.set_synchronous_mode,False)
             self.command("restore_world_settings",self.world.apply_settings,self.original)
             audit['settings_restored'] = settings_dict(self.call(self.world.get_settings))==settings_dict(self.original)

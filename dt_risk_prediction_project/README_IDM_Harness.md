@@ -222,3 +222,9 @@ python dt_risk_prediction_project/Estimate_IDM_T.py --history STAGE2_DIR/capture
 T採用はsample/time、response/profile、境界、RMSE<=0.5m/s²等の既存条件で判断する。
 低速のTM/PID走行にIDMが適合せず不採用になる可能性は残る。閾値を緩めて成功扱いしない。
 今回の完了はオフライン準備完了まで。実走成立を確認してから将来予測への反映・比較を別作業で行う。
+
+## 単車制動校正
+
+単車・低速で制動入力と物理応答を観測する独立Harnessは
+[README_Brake_Calibration.md](README_Brake_Calibration.md) を参照。
+配布設定は未監査で実走不可。実走には新たな明示的承認が必要。
