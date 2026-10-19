@@ -19,7 +19,7 @@ def source_metadata():
     root=Path(__file__).resolve().parent
     payload=dict(source_sha256={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in
                  [root/name for name in ('Run_IDM_Following_Experiment.py','idm_experiment_harness.py',
-                  'idm_harness_config.py','idm_harness_host.py','idm_context.py')]})
+                  'idm_harness_config.py','idm_harness_host.py','idm_context.py','idm_normal_stage1.py')]})
     try:
         payload['source_commit']=subprocess.run(['git','rev-parse','HEAD'],cwd=root,
             check=True,capture_output=True,text=True,timeout=5).stdout.strip()
@@ -54,6 +54,8 @@ def classify_exit(code, result, server_lost=False):
 
 
 def supervise(args, scenario):
+    if hasattr(scenario,'require_executable'):
+        scenario.require_executable(args.stage)
     stage_gate(args.stage, scenario, args.stage1_result)
     if not args.server_pid or not process_alive(args.server_pid):
         raise ValueError("--execute requires an existing live --server-pid; never starts a server")
@@ -149,6 +151,8 @@ def main(argv=None):
         scenario=load_scenario(args.config)
         if not 1<=args.port<=65535 or not math.isfinite(args.wall_timeout) or args.wall_timeout<=0:
             raise ValueError('invalid server port or wall timeout')
+        if (args.worker or args.execute) and hasattr(scenario,'require_executable'):
+            scenario.require_executable(args.stage)
         if args.worker:
             if not args.run_dir or not args.supervisor_pid or not args.server_pid:
                 raise ValueError('worker must be launched by supervisor')
@@ -168,7 +172,10 @@ def main(argv=None):
         if not args.execute:
             print(json.dumps(dict(status='validated_offline_no_connection',stage=args.stage,
                  scenario=asdict_config(scenario),config_sha256=scenario.fingerprint,
-                 clearance_budget_m=scenario.clearance_budget),indent=2))
+                 clearance_budget_m=scenario.clearance_budget,
+                 **(dict(executable_route=scenario.route_audit is not None,
+                         distance_budget=scenario.distance_report(),initialization=scenario.initialization)
+                    if hasattr(scenario,'distance_report') else {})),indent=2))
             return 0
         return supervise(args,scenario)
     except (ValueError,OSError,RuntimeError) as exc:

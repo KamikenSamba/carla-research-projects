@@ -11,6 +11,7 @@ from types import SimpleNamespace as NS
 from dt_risk_common import CsvWriter, actor_state_fieldnames, actor_state_from_actor, to_row
 from idm_context import FollowingContextCollector
 from idm_harness_host import ServerUnavailable
+from idm_normal_stage1 import NormalStage1, NormalSafety, stopping_distance
 from idm_leader import find_leader, path_projection, sample_vehicle
 from Run_DT_Risk_V2_IDM import save_snapshot
 
@@ -87,6 +88,7 @@ class Harness:
         self.sequence = 0
         self.seed_applied = False
         self.holds = {}
+        self.normal_safety = NormalSafety(config) if isinstance(config, NormalStage1) else None
         self.metrics = {"moving_frames": 0, "eligible": 0, "valid": 0,
                         "past_eligible": 0, "past_valid": 0, "speed": [], "gap": []}
         self.result = dict(status="running", stage=stage, pid=os.getpid(), config_sha256=config.fingerprint,
@@ -148,13 +150,39 @@ class Harness:
         self.result.update(final_frame=frame, sim_time_s=self.t)
         return snap
 
+    def normal_acceleration_gate(self, raw):
+        if self.normal_safety is None:
+            return
+        with (self.directory/'acceleration_observations.jsonl').open('a',encoding='utf-8') as stream:
+            stream.write(json.dumps(raw,allow_nan=False)+'\n')
+        reason,actor=self.normal_safety.acceleration_reason(raw['rows'],raw['carla_frame'])
+        if reason:
+            save(self.directory/'safety_decision.json',dict(reason=reason,actor_id=actor,
+                 frame=raw['carla_frame'],phase=raw['phase'],sim_time_s=raw['sim_time_s'],
+                 consecutive_counts=self.normal_safety.counts))
+            raise EarlyStop(reason,actor)
+        for row in raw['rows']:
+            components=list(row['velocity'].values())
+            self.fail_if(len(components)!=3 or any(type(v) not in (int,float) or not math.isfinite(v)
+                                                 for v in components),'nonfinite_state',row['actor_id'])
+            speed=math.sqrt(sum(v*v for v in components))
+            limit=self.c.follower_speed_limit if row['role']=='follower' else self.c.leader_speed_limit
+            self.fail_if(speed>limit,'speed_envelope',row['actor_id'])
+
     def prepare(self):
         c = self.c
+        if self.normal_safety:
+            c.require_executable(self.stage)  # before the first CARLA RPC, even for direct workers
+            save(self.directory/'distance_budget.json',c.distance_report())
         self.world = self.call(self.client.get_world)
         versions = [self.call(self.client.get_client_version), self.call(self.client.get_server_version)]
         self.fail_if(versions != ["0.9.16", "0.9.16"], "version_mismatch")
         self.map = self.call(self.world.get_map)
         self.fail_if(self.map.name.split("/")[-1] != c.map_name, "map_mismatch")
+        if self.normal_safety:
+            import hashlib
+            actual_hash=hashlib.sha256(self.call(self.map.to_opendrive).encode()).hexdigest()
+            self.fail_if(actual_hash!=c.route_audit['opendrive_sha256'],'route_map_hash_mismatch')
         self.original = self.call(self.world.get_settings)
         self.fail_if(self.original.synchronous_mode, "world_already_synchronous")
         actors = list(self.call(self.world.get_actors))
@@ -173,10 +201,17 @@ class Harness:
                 self.fail_if(len(following) != 1 or following[0].is_junction or
                              (following[0].road_id, following[0].section_id, following[0].lane_id)
                              != (c.road, c.section, c.lane), "route_branch")
+                if self.normal_safety:
+                    p,q=following[0].transform.location,wp.transform.location
+                    self.fail_if(math.dist((p.x,p.y,p.z),(q.x,q.y,q.z))>0.1,'route_direction_disconnected')
             self.route.append(wp)
-        self.fail_if(bool(self.route[0].get_landmarks(95, stop_at_junction=False)), "regulatory_landmarks")
+        self.fail_if(bool(self.route[0].get_landmarks((c.follower_s-c.end_s+20) if self.normal_safety else 95, stop_at_junction=False)), "regulatory_landmarks")
         self.path = [(w.transform.location.x, w.transform.location.y) for w in self.route]
         self.route_length = sum(math.dist(a, b) for a, b in zip(self.path, self.path[1:]))
+        if self.normal_safety:
+            self.fail_if(self.route_length+1e-6<c.planned_route_length,'route_too_short')
+            self.fail_if(any(math.dist((w.transform.location.x,w.transform.location.y,w.transform.location.z),p)>0.1
+                             for w,p in zip(self.route,c.route_audit['points'])),'route_geometry_mismatch')
         # Parked/static road users may not be vehicle actors. Query their level boxes too.
         labels = ('Car','Truck','Bus','Motorcycle','Bicycle','Pedestrians')
         self.fail_if(not hasattr(self.world,'get_level_bbs') or not hasattr(self.api,'CityObjectLabel'),
@@ -242,13 +277,28 @@ class Harness:
             self.ledger("owned_actor", role=role, actor_id=actor.id, blueprint=actor.type_id,
                         spawn=dict(x=tf.location.x, y=tf.location.y, z=tf.location.z,
                                    yaw=tf.rotation.yaw, road=c.road, section=c.section, lane=c.lane))
+        if self.normal_safety:
+            self.fail_if(any(a.bounding_box.extent.x+abs(a.bounding_box.location.x)>c.nominal_front_extent
+                             for a in self.owned.values()),'vehicle_extent_exceeds_budget')
         # Settle under physics, no forced target velocity. All ticks go through tick().
         for _ in range(20):
             self.tick()
+            settled=[]
+            if self.normal_safety:
+                raw=dict(phase='settle',carla_frame=self.last_frame,sim_time_s=self.last_time,
+                         rows=settled,frame_validated=False,acquisition_status='partial',
+                         expected_actor_ids=[a.id for a in self.owned.values()])
+                save(self.directory/'last_observation.json',raw)
             for role,actor in self.owned.items():
+                self.active_actor=actor.id
                 tf=self.call(actor.get_transform)
                 velocity=self.call(actor.get_velocity)
                 control=self.call(actor.get_control)
+                if self.normal_safety:
+                    acceleration=self.call(actor.get_acceleration) if hasattr(actor,'get_acceleration') else None
+                    settled.append(raw_actor_observation(actor,role,tf,velocity,control,acceleration,
+                                                         self.last_frame,self.last_time))
+                    save(self.directory/'last_observation.json',raw)
                 self.ledger('settle_observation',actor_id=actor.id,role=role,
                             frame=self.last_frame,world_time_s=self.last_time,
                             x=tf.location.x,y=tf.location.y,z=tf.location.z,
@@ -257,6 +307,11 @@ class Harness:
                                      ('throttle','brake','hand_brake','steer','reverse','gear')},
                             autopilot_requested=False,autopilot_registered_verified=None)
             self.frame_unchanged()
+            if self.normal_safety:
+                raw.update(frame_validated=True,acquisition_status='complete')
+                save(self.directory/'last_observation.json',raw)
+                self.normal_acceleration_gate(raw)
+            self.active_actor=None
         for role, actor in self.owned.items():
             self.registered.add(actor.id)  # cleanup also covers a successful call with failed logging
             returned = self.command("autopilot_register", actor.set_autopilot, True, c.tm_port, actor=actor.id)
@@ -314,6 +369,7 @@ class Harness:
         self.frame_unchanged()
         raw['frame_validated'] = True
         save(self.directory/'last_observation.json', raw)
+        self.normal_acceleration_gate(raw)
         # Inspect both vehicles before a semantic gate can stop the observation. No control/tick here.
         for role, a, tf, velocity, control, accel in acquired:
             self.active_actor = a.id
@@ -403,6 +459,16 @@ class Harness:
 
     def audit_safety(self, phase, audits, context):
         f,l = audits
+        if self.normal_safety:
+            for row in audits:
+                stopping=stopping_distance(row['speed_mps'],self.c.reaction_seconds,self.c.assumed_braking,
+                                           self.c.acceleration_peak)
+                self.fail_if(row['front_clearance_m']<max(self.c.end_clearance,stopping),
+                             'dynamic_endpoint_stopping_margin',row['source_actor_id'])
+            required=stopping_distance(f['speed_mps'],self.c.reaction_seconds,self.c.assumed_braking,
+                                       self.c.acceleration_peak)+self.c.minimum_gap
+            # Assume the leader can become stationary immediately. Do not rely on its braking distance.
+            self.fail_if(f['pair_gap_m']<=required,'dynamic_gap_stopping_margin',f['source_actor_id'])
         self.fail_if(float(f["pair_gap_m"]) <= self.c.minimum_gap,
                      "contact_gap", f["source_actor_id"])
         if f["gap_m"] != "" and f["relative_speed_mps"] != "" and float(f["relative_speed_mps"])>0:
@@ -448,7 +514,9 @@ class Harness:
                 good = (all(r['speed_mps']>=self.c.minimum_speed for r in rows)
                         and rows[0]['gap_m']!='' and 4<=float(rows[0]['gap_m'])<=12)
                 ready = ready+self.c.dt if good else 0
-                if ready+1e-9>=self.c.ready_seconds:
+                settled = (self.normal_safety.ready(rows,self.last_frame) if self.normal_safety
+                           else ready+1e-9>=self.c.ready_seconds)
+                if settled:
                     break
             else:
                 raise EarlyStop("warmup_not_ready")

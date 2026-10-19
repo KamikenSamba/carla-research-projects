@@ -113,4 +113,7 @@ def load_scenario(path):
     values = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     if "profile" in values:
         values["profile"] = tuple(tuple(pair) for pair in values["profile"])
+    if values.get('scenario_kind') == 'normal_stage1':
+        from idm_normal_stage1 import NormalStage1
+        return NormalStage1(**values)
     return Scenario(**values)
