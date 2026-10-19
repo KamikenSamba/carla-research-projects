@@ -61,7 +61,7 @@ brake遷移後0.3sまでに (a)brake0.70の実control観測、(b)速度低下0.0
 
 探索的stressとしてv1.2、遅延0.5、遅延中加速5、制動0.5を仮定すると、`v*tau+a*tau²/2+(v+a*tau)²/(2*b)=14.915m`。発進6＋前端2.42511＋停止14.915＋停止後余裕20＝43.34011m、56mなら12.65989m余る。CLIとdistance_budget.jsonに出力する。b0.5/tau0.5/a5は未測定の探索仮定で、braking_lower_bound/response_upper_boundへ記入しない。無制動や想定外加速まで安全保証する値でもない。
 
-実行にはconfigの `route_audit` が必要：policy_sha256、opendrive_sha256、evidence_sha256、map_name、carla_version、reviewed_by、reviewed_at、evidence_reference、scene_review_reference、dedicated_session_reference、points（全57点のx/y/z）。物理boundはnull/未記入でなければ拒否する。レビュー欄を形式的に埋めず、参照証跡の実物とhashを人手で照合する。
+Town10HD用の実行にはconfigの `route_audit` が必要：policy_sha256、opendrive_sha256、evidence_sha256、map_name、carla_version、reviewed_by、reviewed_at、evidence_reference、scene_review_reference、dedicated_session_reference、points（全57点のx/y/z）。物理boundはnull/未記入でなければ拒否する。レビュー欄を形式的に埋めず、参照証跡の実物とhashを人手で照合する。
 
 起動前検査はversion/map、元WorldSettings（既存sync worldは拒否）、既存vehicle/walker/sensor/controllerがないこと、OpenDRIVE hash、全route geometry、Driving/幅3.4m以上・非junction・単一接続・全体yaw差0.5度以下・標高差0.02m以下/点・規制landmark・静的路上車両bboxを照合し、不一致なら設定変更・spawn前に拒否する。spawn後には実blueprint/bboxとphysicsパラメータを読み、mass/4輪のradius/friction/max brake torqueが不明ならtick前に中止。
 
@@ -110,3 +110,61 @@ python dt_risk_prediction_project/Run_Calibrate_Brakes.py --evaluate-run <runデ
 - [VehicleControl / VehiclePhysicsControl](https://github.com/carla-simulator/carla/blob/0.9.16/PythonAPI/docs/control.yml)：brakeは0〜1の無次元入力。mass・車輪摩擦・最大brake torque等は車両physicsの設定で、入力値から一定減速度を保証しない。
 - [DefaultMovementComponent.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Vehicle/MovementComponents/DefaultMovementComponent.cpp)：VehicleControlをmovement componentへ渡す経路。
 - [WorldObserver.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Sensor/WorldObserver.cpp)：snapshot加速度の速度差分による計算。
+
+## Town01_Opt専用policy v2（Issue #20、実scene未監査）
+
+`configs/brake_calibration_town01_v2.json` は mode=`single_brake_town01_v2`、Town01_Opt / road8 / section0 / lane1 / s250→55専用。s減少方向の196点。配布時のroute_auditはnullであり、接続前に実行を拒否する。既存Town10HDのmode=`single_brake_v1`、配布JSON、fingerprint、制御・安全条件は維持する。V1の既定fingerprintは `450fd09aa784158b5da5371baeb0bdd531015573af13016b9ca94c7a075cd24f`。
+
+Map/road/start/end/距離関連だけを明示的な別policyへ切り替えた。Tesla Model3、dt0.05、目標1.0/上限1.2m/s、throttle0.10・slew0.10/s、PIゲイン、brake0.70、加速度gate、2秒整定、0.5秒停止、単一tick、RPC poison、cleanup/設定復元は同じ。TM/Autopilot/IDM制御は追加しない。未知のmode/map/road/laneや制御値の変更は拒否する。V1のdataclass保存フィールドを増やしていないため旧fingerprintは変わらない。
+
+### 道路根拠と未確認事項
+
+保存OpenDRIVEをCARLA0.9.16のローカルMapで評価した幾何は、実長195.00316911583323m、幅4m、全点z0、heading差約0.091026度。開始点から後方road境界までは約58.69mあり、旧bboxを仮定すると後部のroad境界張出しを避けられる。数学的な完全直線ではなく、初期headingからの経路の横移動は約0.25mある。
+
+通常版Town01とOpt版の保存XML hashは同一：
+`97a7f6ac67812567e5c8ee0599cd823b23f80f30f3f97c502212e38b72e2b709`。
+V2はこのOpenDRIVE hashを固定し、別地図の監査を拒否する。XML一致はOpt sublevel/駐車物/メッシュ/collision/材質/接地を保証しない。Town01 server起動・ロード・接続・spawn・実走は未実施。新しいscene/専用session監査なしに実行用レビュー欄を埋めない。
+
+### V2の追加監査形式
+
+共通のレビュー欄・pointsに加え、次をローカル監査証跡へ保存する。
+
+- `waypoints`：pointsと同順の196辞書。各辞書に `road, section, lane, s, yaw, pitch, roll, width`。s250から55まで1ずつ減少する。
+- `geometry_sha256`：`idm_brake_route.geometry_sha256(points, waypoints)` の値。JSONのsort_keys=True/allow_nan=Falseで両配列を封印し、pose/座標の破損を接続前に拒否する。元証跡自体のhashとreviewer照合も必要。
+- 地図名・policy_sha256・固定OpenDRIVE hash・点数・距離・向き・幅員を相互検査する。姿勢はdegree、roll/pitchの360度と0度を同じ角度として比較する。
+
+点数はs範囲に対応するが、実距離はXYZ座標の隣接距離の総和で求める。整数s差195mと実長の完全一致を要求しない。固定policyの参照実長との差は1cmまで、各点間隔0.95〜1.05m、最大点間dz0.02m。V2レビューの全体標高差は0.02m以内、幅4m（許容1e-6）、pose pitch/rollは水平から0.1度以内、heading差0.5度以内。実worldでは全点XYZ（0.1m以内）とpose（0.01度以内）、幅、Driving/非junction、next接続を照合する。これらは地図照合の許容差で、走行中の既存安全gateを緩和する値ではない。
+
+V2のscene preflightは同じ読取専用の共通処理にcallbackを追加する。旧呼出しは既定のV1処理を保つ。
+
+- 各path segmentの実幅と保守的な端部capを使った平面包絡を作り、初期後部も含めてOBBの8頂点投影/convex hullと重なりを検査する。固定world座標や初期headingのstripだけを調べない。
+- 建物・壁・歩道・植生・駐車物等のsemantic level boxes、NONE分類のenvironment objectsを照会。地表/空のdescriptorはmesh安全性の証明に使わない。道路周辺AABBによる広域除外の後、実path包絡で判定する。
+- 規制landmarkの前方照会に加え、全地図landmarkの経路までの距離20m、対象roadのXML signals/objectsのs範囲±20m、取得actorのtrigger/stop/affected-lane waypointsを調べる。取得不能は拒否する。XML/descriptorを全collisionや停止線の完全検査と同一視しない。
+- 初期設定変更/spawn前にroute_preflight.jsonを保存。spawn後は所有車だけの実bboxを読み、全頂点のsame-lane占有・車線内・初期pose・取得障害物との重なりをtick前に検査しspawn_bbox_audit.jsonへ保存する。未知のbboxは拒否。接地は未検証として記録する。
+- preflightの障害物高さscreenはz=-0.1〜2.1m。生成後の実bboxとの比較は実際の3D高さ範囲で行う。途中のscene変化や未登録collisionを網羅する保証ではない。専用sceneの追加レビューは必須。
+
+### 距離予算
+
+未レビューの配布configでは参照座標由来の195.003169mを使う。レビュー済みconfigではpointsから、world preflight後は実waypoint座標から再計算した長さをdistance_budget.jsonに記録する。`distance_report(route_length_m=...)` の省略可能keywordを追加し、V1の既定出力は保持する。
+
+v1.2m/s、発進6m、前端2.42511m、停止後余裕20mを含める：
+
+|tau s / 遅延中a / 制動b m/s²|停止想定m|必要道路m|195.003169mでの残余m|
+|---|---:|---:|---:|
+|0.5 / 5 / 0.5|14.915|43.34011|151.66306|
+|0.5 / 5 / 0.25|28.605|57.03011|137.97306|
+|1.0 / 5 / 0.25|80.580|109.00511|85.99806|
+
+すべて未実測の感度分析であり、制動下限/応答上限はnull。停止能力がさらに低い、遅延/加速が大きい、RPCが失われる場合は195mでも不足し得る。gate5m/s²は物理上限ではない。1m/s手動brakeの結果を5m/sやTMへ外挿しない。yaw/pitch/実bbox差は追加の余裕評価が必要である。
+
+### オフライン確認と次の承認
+
+次はサーバ不要の設定確認のみ：
+
+```powershell
+python dt_risk_prediction_project/Run_Calibrate_Brakes.py --config dt_risk_prediction_project/configs/brake_calibration_town01_v2.json
+```
+
+既存serverのTown10 mapを変更しない。別の専用Town01 session準備、読み取り専用scene監査、所有静止車の生成/physics/bbox/接地確認、初回走行は、それぞれ新たな明示承認が必要。接地確認にtickが必要ならその操作も承認範囲に含める。今回の実装やmock成功は実走承認ではない。
+
+テストはCARLAをimportしないCLI、両policyの互換性、196点pose/hash/距離、path外周障害物、初期bbox、規制取得失敗、mock E2E/制御frame/cleanup/復元/RPC poisonを検査する。mockの地図・運動は合成fixtureで、実地図の安全性や物理モデルとして扱わない。IDM/T推定/traits/V1/V2の形式は変更しない。
