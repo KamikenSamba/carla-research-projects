@@ -72,6 +72,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--idm-acceleration-exponent", type=float, default=4.0)
     parser.add_argument("--idm-max-decel-mps2", type=float, default=4.0)
     parser.add_argument("--actor-traits", type=Path)
+    parser.add_argument("--collect-following-context", action="store_true",
+                        help="Capture a read-only same-tick IDM history sidecar")
     parser.add_argument("--control-config", type=Path, help="JSON overrides of ControlConfig fields")
     args = parser.parse_args(argv)
     try:
@@ -90,6 +92,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                 raise ValueError("snapshot_at must be <= duration")
         if args.mode == "predict" and args.snapshot is None:
             raise ValueError("--snapshot is required for --mode predict")
+        if args.collect_following_context and args.mode == "predict":
+            raise ValueError("--collect-following-context requires capture or all mode")
         args.traits = load_traits(args.actor_traits)
         control_values = {} if args.control_config is None else json.loads(args.control_config.read_text(encoding="utf-8-sig"))
         args.control = ControlConfig(**control_values)
@@ -160,7 +164,12 @@ def save_snapshot(path, rows):
 
 
 def capture_current_state(args, run_dir, logger):
-    path = baseline.capture_current_state(args, run_dir, logger)
+    if getattr(args, "collect_following_context", False):
+        from idm_context import FollowingContextCollector
+        with FollowingContextCollector(run_dir, args.fixed_delta_seconds) as observer:
+            path = baseline.capture_current_state(args, run_dir, logger, capture_observer=observer)
+    else:
+        path = baseline.capture_current_state(args, run_dir, logger)
     rows = read_snapshot(path)
     unknown = set(args.traits) - {row["logical_actor_id"] for row in rows}
     if unknown:

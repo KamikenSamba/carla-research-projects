@@ -125,7 +125,9 @@ def frame_time(world_snapshot) -> tuple[int, float]:
     return int(world_snapshot.frame), float(world_snapshot.timestamp.elapsed_seconds)
 
 
-def capture_current_state(args: argparse.Namespace, run_dir: Path, logger: logging.Logger) -> Path:
+def capture_current_state(args: argparse.Namespace, run_dir: Path, logger: logging.Logger,
+                          *, capture_observer=None) -> Path:
+    """Optional observer receives the same tick, actors and rows; it must not tick/control."""
     client = connect_client(args.host, args.port, args.timeout)
     world = client.get_world()
     world = ensure_requested_map(client, world, args.map, False, logger)
@@ -155,6 +157,7 @@ def capture_current_state(args: argparse.Namespace, run_dir: Path, logger: loggi
                 carla_frame, sim_time = frame_time(snap)
                 vehicles = iter_vehicle_actors(world)
                 vehicles.sort(key=lambda actor: actor.id)
+                capture_rows = [] if capture_observer is not None else None
 
                 for index, actor in enumerate(vehicles, start=1):
                     logical_id = source_mapping.setdefault(actor.id, logical_id_for_actor(actor, index))
@@ -165,7 +168,15 @@ def capture_current_state(args: argparse.Namespace, run_dir: Path, logger: loggi
                         sim_time_s=sim_time - start_time,
                         logical_actor_id=logical_id,
                     )
-                    capture_writer.writerow(to_row(state))
+                    row = to_row(state)
+                    capture_writer.writerow(row)
+                    if capture_rows is not None:
+                        capture_rows.append(row)
+
+                if capture_observer is not None:
+                    if int(frame) != carla_frame:
+                        raise RuntimeError("Capture frame changed before observation")
+                    capture_observer(world, snap, vehicles, capture_rows)
 
                 if not snapshot_taken and sim_time >= snapshot_target:
                     snapshot_rows = []

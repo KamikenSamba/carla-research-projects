@@ -6,6 +6,9 @@ schema・traits優先順位は変更しない。追加runtime依存はない。
 
 ## 1．既存履歴の確認と不足情報
 
+同tickの収集器は[Following context collector](README_IDM_Context.md)を参照。
+V2 captureの`--collect-following-context`で有効化する。mock E2Eは確認済み、実CARLAは未検証。
+
 | 項目 | capture_states.csv | 今回の扱い |
 |---|---|---|
 | logical_actor_id、source_actor_id | 取得済み | snapshotと同じlogical IDで対応付ける |
@@ -21,7 +24,7 @@ schema・traits優先順位は変更しない。追加runtime依存はない。
 既存`idm_states.csv`にはleader/gap/lane/fallbackがあるが、制御前の状態であり、
 予測後の`prediction_states.csv`と時刻がずれる。signal等も不足するのでそのまま学習入力にしない。
 
-### 追加観測sidecarの最小構造（実CARLA収集器は未実装）
+### 追加観測sidecarの最小構造
 
 既存captureはそのまま残し、同じtickで次のCSVを別ファイルとして収集する設計。
 join keyは **(logical_actor_id, carla_frame)** の完全一致。1ファイルは1capture/episodeに限定し、
@@ -43,12 +46,14 @@ join keyは **(logical_actor_id, carla_frame)** の完全一致。1ファイル�
 source_actor_idはcapture側から得る。先行車は外部車両を含めて観測するが操作・破棄しない。
 先行車・gapの観測は既存`idm_leader.py`のsample/trace/findを再利用する案とし、
 route境界に近い時などの除外理由も併記する。単に最近傍の車両を先行車としない。
-信号の影響判定やlane-change区間の収集は追加設計・実CARLAでの確認が必要。
+信号の影響判定やlane-change区間は収集器の保守的な観測proxyで判定する。実CARLAでの確認が必要。
 未観測の状態を都合よく正常で埋めて推定する運用は禁止する。
 
 context列をすべて含むenriched history CSVも入力できる。sidecar指定時に上書きできるのは
 上表のcontextと任意加速度のみで、速度・時刻・actor IDは変更しない。
 sidecar keyの欠落・重複はエラー。joinできなかった行はcontext不足として除外する。
+収集器の`.meta.json`がある場合はcompletedとcapture/contextの行数・key集合一致も要求し、
+失敗・途中終了・途中切断された収集物を拒否する。metaなしの既存入力は従来どおり扱う。
 
 ## 2．推定方法と品質ゲート
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, replace
 import csv
+import json
 import math
 from pathlib import Path
 from statistics import fmean
@@ -59,12 +60,23 @@ def read_history(path: Path, context_path: Path | None = None) -> list[dict]:
     rows = read(path)
     if context_path is None:
         return rows
+    metadata_path = context_path.with_suffix(".meta.json")
+    metadata = None
+    if metadata_path.exists():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict) or metadata.get("status") != "completed":
+            raise ValueError("context capture is incomplete or failed")
     context = {}
     for row in read(context_path):
         key = (row.get("logical_actor_id"), row.get("carla_frame"))
         if not all(key) or key in context:
             raise ValueError("missing or duplicate history-context key")
         context[key] = row
+    if metadata is not None:
+        capture_keys = {(row.get("logical_actor_id"), row.get("carla_frame")) for row in rows}
+        if (metadata.get("rows") != len(context) or len(rows) != len(context)
+                or capture_keys != set(context)):
+            raise ValueError("capture/context keys or metadata row count differ")
     for row in rows:
         extra = context.get((row.get("logical_actor_id"), row.get("carla_frame")), {})
         for name in (*CONTEXT_FIELDS, "observed_acceleration_mps2"):
