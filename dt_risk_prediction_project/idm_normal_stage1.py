@@ -92,6 +92,8 @@ class NormalStage1(Scenario):
         if any(v is not None for v in coordinates):
             if not all(finite(v) for v in coordinates) or any(type(v) is not int for v in coordinates[:3]):
                 raise ValueError('partial/invalid route coordinates')
+            if self.road<0 or self.section<0 or self.lane==0 or min(coordinates[3:])<0:
+                raise ValueError('invalid OpenDRIVE road/lane/s domain')
             if any(v != int(v) for v in coordinates[3:]):
                 raise ValueError('route s must be integer metre samples')
             if self.follower_s-self.leader_s != self.initial_spacing or self.follower_s-self.end_s < self.planned_route_length:

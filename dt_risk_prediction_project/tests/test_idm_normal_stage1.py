@@ -18,18 +18,22 @@ from test_idm_context import vector
 
 def reviewed_config():
     # Test fixture only: never describes Town10HD geometry or real physical validation.
-    c=NormalStage1(road=10,section=0,lane=1,follower_s=120,leader_s=98,end_s=-80)
+    c=NormalStage1(road=10,section=0,lane=1,follower_s=320,leader_s=298,end_s=120)
     a=dict(policy_sha256=c.policy_sha256,opendrive_sha256=hashlib.sha256(b'synthetic').hexdigest(),
            evidence_sha256='f'*64,reviewed_by='TEST FIXTURE',reviewed_at='TEST ONLY',
            evidence_reference='synthetic offline fixture',carla_version='0.9.16',map_name=c.map_name,
            physical_bounds=dict(braking_lower_bound_mps2=2.0,response_upper_bound_s=0.3,
                                 evidence_reference='synthetic test assumption'),
-           points=[[i,0,0] for i in range(201)])
+           points=[[i-200,0,0] for i in range(201)])
     return replace(c,route_audit=a)
 
 
 def normal_run(directory,fault=None,at=75):
     w=World();w.map.to_opendrive=lambda:'synthetic';gate=Gate();c=reviewed_config()
+    xodr=w.map.get_waypoint_xodr
+    def driving_waypoint(*args):
+        wp=xodr(*args);wp.lane_type='Driving';return wp
+    w.map.get_waypoint_xodr=driving_waypoint
     original=w.tick
     def tick():
         # Piecewise kinematic fixture for contract testing, NOT a TM/physics model.
@@ -58,7 +62,7 @@ def normal_run(directory,fault=None,at=75):
     w.tick=tick
     client=NS(get_world=lambda:w,get_client_version=lambda:'0.9.16',get_server_version=lambda:'0.9.16',
               get_trafficmanager=lambda port:w.tm)
-    api=NS(CityObjectLabel=NS(**{k:k for k in ('Car','Truck','Bus','Motorcycle','Bicycle','Pedestrians')}))
+    api=NS(LaneType=NS(Driving='Driving'),CityObjectLabel=NS(**{k:k for k in ('Car','Truck','Bus','Motorcycle','Bicycle','Pedestrians')}))
     h=Harness(client,api,c,'stage1',directory,gate,Ownership(w))
     return h.run(),w,gate,h
 
@@ -85,7 +89,8 @@ def test_default_config_is_draft_and_refuses_connection(tmp_path,monkeypatch,cap
     dict(acceleration_sustained=4),dict(assumed_braking=3),dict(reaction_seconds=0.2),
     dict(lateral_limit=0.5),dict(minimum_valid_ratio=0.8),dict(minimum_ttc=0.5),
     dict(warmup_seconds=None),dict(seed=True),dict(follower_s=120),dict(road=10.0),
-    dict(acceleration_peak=float('nan')),dict(follower_speed=5.0)])
+    dict(acceleration_peak=float('nan')),dict(follower_speed=5.0),
+    dict(road=10,section=0,lane=1,follower_s=120,leader_s=98,end_s=-80)])
 def test_invalid_or_relaxed_configuration_rejected(change):
     with pytest.raises(ValueError):replace(NormalStage1(),**change)
 
@@ -220,7 +225,8 @@ def test_single_bad_ready_frame_delays_capture(tmp_path):
     assert not (tmp_path/'following_context.csv').exists()
 
 @pytest.mark.parametrize('fault,reason', [('hash','route_map_hash_mismatch'),('geometry','route_geometry_mismatch'),
-                                         ('branch','route_branch'),('obstacle','static_road_user_obstacle')])
+                                         ('branch','route_branch'),('obstacle','static_road_user_obstacle'),
+                                         ('shoulder','route_not_driving'),('grade','route_grade')])
 def test_live_readonly_route_recheck_precedes_tm_and_world_changes(tmp_path,monkeypatch,fault,reason):
     c=reviewed_config();original=Harness.prepare
     def prepare(h):
@@ -234,8 +240,21 @@ def test_live_readonly_route_recheck_precedes_tm_and_world_changes(tmp_path,monk
             def waypoint(*args):
                 w=original_waypoint(*args);w.next=lambda d:[];return w
             world.map.get_waypoint_xodr=waypoint
+        elif fault=='shoulder':
+            original_waypoint=world.map.get_waypoint_xodr
+            def waypoint(*args):
+                w=original_waypoint(*args);w.lane_type='Shoulder';return w
+            world.map.get_waypoint_xodr=waypoint
+        elif fault=='grade':
+            from test_idm_harness import Waypoint
+            class SlopedWaypoint(Waypoint):
+                lane_type='Driving'
+                @property
+                def transform(self):
+                    tf=super().transform;tf.location.z=self.x*0.03;return tf
+            world.map.get_waypoint_xodr=lambda road,lane,s:SlopedWaypoint(world,120-s)
         elif fault=='obstacle':
-            world.get_level_bbs=lambda label:[NS(location=vector(100,0,0),extent=vector(2,1,1),rotation=NS(yaw=0))]
+            world.get_level_bbs=lambda label:[NS(location=vector(-100,0,0),extent=vector(2,1,1),rotation=NS(yaw=0))]
         return original(h)
     monkeypatch.setattr(Harness,'prepare',prepare)
     result,w,gate,h=normal_run(tmp_path)

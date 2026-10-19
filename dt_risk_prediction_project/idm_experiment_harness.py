@@ -194,6 +194,11 @@ class Harness:
             wp = self.map.get_waypoint_xodr(c.road, c.lane, s)
             self.fail_if(wp is None or (wp.road_id, wp.section_id, wp.lane_id) != (c.road, c.section, c.lane)
                          or wp.is_junction or wp.lane_width < 3.4, "route_preflight_failed")
+            if self.normal_safety:
+                self.fail_if(wp.lane_type!=self.api.LaneType.Driving,'route_not_driving')
+                if self.route:
+                    self.fail_if(abs(wp.transform.location.z-self.route[-1].transform.location.z)>0.02,
+                                 'route_grade')
             if self.route:
                 delta = (wp.transform.rotation.yaw-self.route[0].transform.rotation.yaw+180)%360-180
                 self.fail_if(abs(delta) > 0.5, "route_not_straight")
