@@ -87,3 +87,6 @@ jobs:
         run: |
           python dt_risk_prediction_project/Run_Calibrate_Brakes.py
           python dt_risk_prediction_project/Run_Calibrate_Brakes.py --config dt_risk_prediction_project/configs/brake_calibration_town01_v2.json
+
+      - name: Validate independent scene audit plan without CARLA
+        run: python dt_risk_prediction_project/Run_Audit_Town01_Scene.py
