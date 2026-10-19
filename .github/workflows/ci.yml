@@ -77,3 +77,6 @@ jobs:
 
       - name: Run server-free DT tests
         run: python -m pytest -q dt_risk_prediction_project/tests
+
+      - name: Validate experiment configuration without CARLA
+        run: python dt_risk_prediction_project/Run_IDM_Following_Experiment.py
