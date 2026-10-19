@@ -32,6 +32,34 @@ def save(path, payload):
     temporary.replace(path)
 
 
+def raw_actor_observation(actor, role, tf, velocity, control, acceleration, frame, sim_time):
+    """Serialize acquired values, never manufacture acceleration or missing geometry."""
+    def scalar(value):
+        return str(value) if isinstance(value, float) and not math.isfinite(value) else value
+
+    def vector(value, keys=('x', 'y', 'z')):
+        return {k: scalar(getattr(value, k, None)) for k in keys}
+
+    forward = tf.get_forward_vector()
+    values = [getattr(acceleration, k, None) for k in ('x', 'y', 'z')]
+    valid_acceleration = all(isinstance(v, (int, float)) and math.isfinite(v) for v in values)
+    longitudinal = (sum(v * getattr(forward, k) for v, k in zip(values, ('x', 'y', 'z')))
+                    if valid_acceleration else None)
+    box = getattr(actor, 'bounding_box', None)
+    return dict(actor_id=actor.id, role=role, frame=frame, sim_time_s=sim_time,
+                logical_actor_id='role:idm_harness:' + role, control_read_at_frame=frame,
+                transform=dict(vector(tf.location), **vector(tf.rotation, ('yaw', 'pitch', 'roll'))),
+                velocity=vector(velocity), forward=vector(forward),
+                acceleration=vector(acceleration), a_long_mps2=scalar(longitudinal),
+                acceleration_source='get_acceleration' if acceleration is not None else None,
+                observation_errors=[] if valid_acceleration else ['acceleration_unknown'],
+                bounding_box=(dict(location=vector(box.location), extent=vector(box.extent),
+                                   rotation=vector(box.rotation, ('yaw', 'pitch', 'roll')))
+                              if box is not None else None),
+                control={k: scalar(getattr(control, k, None)) for k in
+                         ('throttle', 'brake', 'hand_brake', 'steer', 'reverse', 'gear', 'manual_gear_shift')})
+
+
 AUDIT_FIELDS = ["phase", "carla_frame", "sim_time_s", "world_time_s", "source_actor_id", "logical_actor_id",
     "x", "y", "z", "vx", "vy", "vz", "speed_mps", "yaw", "ax", "ay", "az", "a_long_mps2",
     "throttle", "brake", "hand_brake", "steer", "reverse", "gear", "manual_gear_shift",
@@ -263,22 +291,32 @@ class Harness:
         self.fail_if(any(a.id not in self.initial_ids | {v.id for v in self.owned.values()} for a in current),
                      "external_actor_appeared")
         self.fail_if(any(a.id not in current_ids for a in self.owned.values()), "actor_disappeared")
-        views, capture, audits, samples, raw = [], [], [], [], []
+        views, capture, audits, samples = [], [], [], []
+        acquired = []
+        raw = dict(schema_version=2, phase=phase, carla_frame=self.last_frame, sim_time_s=sim_time,
+                   world_time_s=float(snap.timestamp.elapsed_seconds),
+                   expected_actor_ids=[a.id for a in self.owned.values()], rows=[],
+                   acquisition_status='partial', frame_validated=False,
+                   command_sequence=command['sequence'], command_based_on_frame=command['based_on'],
+                   leader_desired_speed_mps=command['speed'], follower_desired_speed_mps=self.c.follower_speed,
+                   tm_port=self.c.tm_port, seed_requested=self.c.seed, seed_applied=self.seed_applied)
+        # Save an empty/partial envelope first: an RPC failure cannot leave the prior frame looking current.
+        save(self.directory/'last_observation.json', raw)
         for role, a in self.owned.items():
             self.active_actor = a.id
             tf, velocity = self.call(a.get_transform), self.call(a.get_velocity)
             control = self.call(a.get_control)
             accel = self.call(a.get_acceleration) if hasattr(a, "get_acceleration") else None
-            # Persist the triggering frame even if a safety check below rejects it.
-            def scalar(value):
-                return value if not isinstance(value,float) or math.isfinite(value) else str(value)
-            raw.append(dict(actor_id=a.id,role=role,frame=self.last_frame,sim_time_s=sim_time,
-                       transform={k:scalar(v) for k,v in dict(x=tf.location.x,y=tf.location.y,
-                                                            z=tf.location.z,yaw=tf.rotation.yaw).items()},
-                       velocity={k:scalar(getattr(velocity,k)) for k in ('x','y','z')},
-                       control={k:scalar(getattr(control,k,None)) for k in
-                                ('throttle','brake','hand_brake','steer','reverse','gear','manual_gear_shift')}))
-            save(self.directory/'last_observation.json',dict(phase=phase,rows=raw))
+            raw['rows'].append(raw_actor_observation(a, role, tf, velocity, control, accel, self.last_frame, sim_time))
+            acquired.append((role, a, tf, velocity, control, accel))
+            save(self.directory/'last_observation.json', raw)
+        raw['acquisition_status'] = 'complete'
+        self.frame_unchanged()
+        raw['frame_validated'] = True
+        save(self.directory/'last_observation.json', raw)
+        # Inspect both vehicles before a semantic gate can stop the observation. No control/tick here.
+        for role, a, tf, velocity, control, accel in acquired:
+            self.active_actor = a.id
             at_light = self.call(a.is_at_traffic_light)
             light_state = str(self.call(a.get_traffic_light_state)) if hasattr(a, "get_traffic_light_state") else ""
             view = NS(id=a.id, attributes=a.attributes, type_id=a.type_id, bounding_box=a.bounding_box,
