@@ -277,7 +277,7 @@ class Harness:
              seed_applied=self.seed_applied, registration_verified=None,
              route_length_m=self.route_length, route=[[x,y] for x,y in self.path]))
 
-    def inspect_world_route(self, *, strict=False):
+    def inspect_world_route(self, *, strict=False, obstacle_audit=None):
         """Read-only preflight shared by following and single-vehicle calibration."""
         c = self.c
         self.world = self.call(self.client.get_world)
@@ -287,7 +287,8 @@ class Harness:
         self.fail_if(self.map.name.split("/")[-1] != c.map_name, "map_mismatch")
         if strict:
             import hashlib
-            actual_hash=hashlib.sha256(self.call(self.map.to_opendrive).encode()).hexdigest()
+            self.opendrive_text=self.call(self.map.to_opendrive)
+            actual_hash=hashlib.sha256(self.opendrive_text.encode()).hexdigest()
             self.fail_if(actual_hash!=c.route_audit['opendrive_sha256'],'route_map_hash_mismatch')
         self.original = self.call(self.world.get_settings)
         self.fail_if(self.original.synchronous_mode, "world_already_synchronous")
@@ -323,6 +324,10 @@ class Harness:
             self.fail_if(self.route_length+1e-6<c.planned_route_length,'route_too_short')
             self.fail_if(any(math.dist((w.transform.location.x,w.transform.location.y,w.transform.location.z),p)>0.1
                              for w,p in zip(self.route,c.route_audit['points'])),'route_geometry_mismatch')
+        if obstacle_audit is not None:
+            self.preflight_actors=actors
+            obstacle_audit(self)
+            return versions, actors
         # Parked/static road users may not be vehicle actors. Query their level boxes too.
         labels = ('Car','Truck','Bus','Motorcycle','Bicycle','Pedestrians')
         self.fail_if(not hasattr(self.world,'get_level_bbs') or not hasattr(self.api,'CityObjectLabel'),

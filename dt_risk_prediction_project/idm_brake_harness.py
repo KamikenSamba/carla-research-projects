@@ -53,8 +53,13 @@ class BrakeHarness(Harness):
 
     def prepare(self):
         c=self.c;c.require_executable(self.stage)
-        self.inspect_world_route(strict=True)
-        save(self.directory/'distance_budget.json',c.distance_report())
+        if c.extended_route_audit:
+            from idm_brake_route import inspect_town01
+            self.inspect_world_route(strict=True,obstacle_audit=inspect_town01)
+        else:
+            self.inspect_world_route(strict=True)
+        save(self.directory/'distance_budget.json',c.distance_report(
+            **({'route_length_m':self.route_length} if c.extended_route_audit else {})))
         settings=self.call(self.world.get_settings)
         settings.synchronous_mode=True;settings.fixed_delta_seconds=c.dt
         settings.substepping=True;settings.max_substep_delta_time=.01;settings.max_substeps=10
@@ -81,6 +86,9 @@ class BrakeHarness(Harness):
                     evidence='owned fresh actor; no autopilot/TM API calls',registration_verified=None)
         self.fail_if(actor.bounding_box.extent.x+abs(actor.bounding_box.location.x)>c.front_extent_limit,
                      'vehicle_extent_exceeds_budget',actor.id)
+        if c.extended_route_audit:
+            from idm_brake_route import inspect_spawn_bbox
+            inspect_spawn_bbox(self,actor)
         self.fail_if(not hasattr(actor,'get_physics_control'),'physics_parameters_unknown',actor.id)
         physics=physics_record(self.call(actor.get_physics_control))
         save(self.directory/'vehicle_physics.json',physics)

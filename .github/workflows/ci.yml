@@ -84,4 +84,6 @@ jobs:
           python dt_risk_prediction_project/Run_IDM_Following_Experiment.py --config dt_risk_prediction_project/configs/idm_normal_stage1.json
 
       - name: Validate single-vehicle brake calibration without CARLA
-        run: python dt_risk_prediction_project/Run_Calibrate_Brakes.py
+        run: |
+          python dt_risk_prediction_project/Run_Calibrate_Brakes.py
+          python dt_risk_prediction_project/Run_Calibrate_Brakes.py --config dt_risk_prediction_project/configs/brake_calibration_town01_v2.json

@@ -13,7 +13,8 @@ from idm_brake_metrics import read_validated_run
 from idm_harness_host import HealthGate,listener_pids
 from Run_IDM_Following_Experiment import supervise
 
-SOURCE_FILES=('Run_Calibrate_Brakes.py','idm_brake_config.py','idm_brake_harness.py','idm_brake_metrics.py')
+SOURCE_FILES=('Run_Calibrate_Brakes.py','idm_brake_config.py','idm_brake_harness.py',
+              'idm_brake_metrics.py','idm_brake_route.py','idm_experiment_harness.py')
 
 
 def main(argv=None):
