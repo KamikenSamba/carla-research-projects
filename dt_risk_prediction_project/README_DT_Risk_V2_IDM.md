@@ -1,5 +1,9 @@
 # DT Risk Prediction V2: IDM / TM
 
+Offline per-vehicle T fitting from driving history is documented in
+[History-based headway estimation](README_IDM_History.md). It exports this
+runner's existing actor-traits JSON format without changing V1 or prediction schemas.
+
 V1 (`Run_DT_Risk_V1.py`, `dt_risk_common.py`) is unchanged. V2 adds a custom
 IDM prediction controller and delegates `--prediction-controller tm` to V1's
 prediction function. Both modes reconstruct the same snapshot, use the same
