@@ -3,6 +3,9 @@
 PR #11をbaseとする新規の実験入口。**実CARLAには未接続・未実走**。
 デフォルトCLIは設定検証だけを行い、CARLAをimportしない。実走成立、T識別性、予測精度の改善を主張しない。
 
+発進時のPID飽和、制御frameの解釈、中止frameのraw観測拡張と次回の条件付き設計は
+[低速発進の監査と対策](README_IDM_Startup.md)を参照。制御・安全閾値の変更を有効化するものではない。
+
 ## 既存構成の問題と確認範囲
 
 旧`capture_trial/trial_worker.py`と起動元`trial_supervisor.py`はGit管理外のローカル証跡で、
