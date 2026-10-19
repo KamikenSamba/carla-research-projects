@@ -1,0 +1,71 @@
+{
+  "map_name": "Town10HD_Opt",
+  "blueprint": "vehicle.tesla.model3",
+  "dt": 0.05,
+  "duration": 15.0,
+  "snapshot_at": 10.0,
+  "tm_port": 8000,
+  "seed": 42,
+  "road": 10,
+  "section": 0,
+  "lane": 1,
+  "follower_s": 120.0,
+  "leader_s": 108.0,
+  "end_s": 64.0,
+  "spawn_height": 0.4,
+  "follower_speed": 2.2,
+  "following_distance": 5.0,
+  "warmup_speed": 1.4,
+  "warmup_seconds": 6.0,
+  "warmup_distance": 6.0,
+  "ready_seconds": 1.0,
+  "leader_speed_limit": 1.9,
+  "follower_speed_limit": 2.5,
+  "minimum_speed": 1.0,
+  "stop_seconds": 0.5,
+  "minimum_gap": 2.0,
+  "minimum_ttc": 1.0,
+  "end_clearance": 6.0,
+  "nominal_front_extent": 2.42511,
+  "lateral_limit": 0.3,
+  "heading_limit": 5.0,
+  "deviation_seconds": 0.25,
+  "leader_missing_seconds": 0.25,
+  "invalid_seconds": 0.5,
+  "minimum_valid_ratio": 0.9,
+  "minimum_moving_seconds": 12.0,
+  "profile": [
+    [
+      0,
+      1.4
+    ],
+    [
+      2,
+      1.4
+    ],
+    [
+      4,
+      1.8
+    ],
+    [
+      5,
+      1.8
+    ],
+    [
+      7,
+      1.3
+    ],
+    [
+      9,
+      1.3
+    ],
+    [
+      11,
+      1.7
+    ],
+    [
+      15,
+      1.7
+    ]
+  ]
+}

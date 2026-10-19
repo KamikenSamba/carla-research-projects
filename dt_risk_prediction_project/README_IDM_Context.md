@@ -4,6 +4,9 @@ PR #9の[sidecar契約](README_IDM_History.md)に従い、既存captureと同じ
 `following_context.csv`を生成する。**実CARLA収集・実データ推定精度は未検証**。
 今回はoffline実装・mock検証と実験計画のみで、サーバ起動・接続は行っていない。
 
+単一TM/tick ownerで2台を走行させる専用入口は[実験Harness](README_IDM_Harness.md)を参照。
+既存captureのCLIは維持し、新Harnessの実CARLA挙動は未検証。
+
 ## 接続方式の比較と採用
 
 | 方式 | 利点 | 問題・判断 |
@@ -15,6 +18,7 @@ PR #9の[sidecar契約](README_IDM_History.md)に従い、既存captureと同じ
 V1の`capture_current_state(..., *, capture_observer=None)`がcapture行を作成した直後に
 observerを一度呼ぶ。V2の`--collect-following-context`指定時だけ収集器を接続する。
 callbackにはworld、同tickのsnapshot、同じvehicle一覧、書き出したcapture行を渡す。
+collectorは書き出したcontext行のlistも返す。従来の呼び出しは戻り値を無視するため互換。
 未指定時は以前の3引数呼出しを維持し、V1 CLI・既存CSV/JSON列・既定の処理順序は変えない。
 V1のprediction/cleanup・IDM数式・traits優先順位は変更しない。
 

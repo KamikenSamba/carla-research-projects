@@ -252,3 +252,4 @@ class FollowingContextCollector:
         elapsed = perf_counter() - started
         self.observation_seconds += elapsed
         self.maximum_observation_seconds = max(self.maximum_observation_seconds, elapsed)
+        return output
