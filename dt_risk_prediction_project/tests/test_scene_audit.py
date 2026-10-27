@@ -48,7 +48,11 @@ class World(Sentinel):
     id=42
     def __init__(self):
         self.map=Map();self.settings=NS(synchronous_mode=False,fixed_delta_seconds=None,no_rendering_mode=False)
-        self.weather=NS(wetness=0.,cloudiness=0.);self.actors=[];self.boxes=[];self.objects=[]
+        self.weather=NS(cloudiness=0.,precipitation=0.,precipitation_deposits=0.,wind_intensity=0.,
+            sun_azimuth_angle=0.,sun_altitude_angle=0.,fog_density=0.,fog_distance=0.,
+            fog_falloff=0.,wetness=0.,scattering_intensity=0.,mie_scattering_scale=0.,
+            rayleigh_scattering_scale=.0331,dust_storm=0.)
+        self.actors=[];self.boxes=[];self.objects=[]
         self.snapshots=iter([(100,5.),(110,5.5)]);self.settings_calls=0;self.actor_calls=0
     def get_map(self):return self.map
     def get_settings(self):self.settings_calls+=1;return self.settings
@@ -113,6 +117,30 @@ def test_mock_e2e_196_window_no_mutation(tmp_path,synthetic):
         record=json.loads((a.e.directory/(file+'.json')).read_text(encoding='utf-8'))
         assert record['synthetic'] is True and record['source_commit']=='TEST_SYNTHETIC'
     assert (a.e.directory/'report_ja.md').is_file()
+
+
+def test_weather_presets_do_not_abort_full_mock_audit(tmp_path,synthetic):
+    values=vars(World().weather)
+    class Weather:
+        def __init__(self):self.__dict__.update(values)
+    Weather.ClearNight=Weather()
+    client=Client();client.world.weather=Weather()
+    a,result=audit(tmp_path,synthetic,client)
+    assert result['status']=='pass'
+    env=a.e.data['environment']
+    assert env['weather_before']==env['weather_after']==values
+    assert 'ClearNight' not in env['weather_before']
+    assert sum(x['api']=='world.get_weather' for x in a.reader.ledger)==2
+    assert a.e.data['route_geometry']['point_count']==196
+
+
+def test_weather_structure_failure_stops_before_route_getters(tmp_path,synthetic):
+    client=Client();client.world.weather.unexpected={}
+    a,result=audit(tmp_path,synthetic,client)
+    assert result['status']=='unknown' and 'unexpected weather attributes' in result['reason']
+    assert a.reader.ledger[-1]['api']=='world.get_weather'
+    assert a.reader.ledger[-1]['status']=='returned'
+    assert not any(x['api'] in ('world.get_actors','map.get_waypoint_xodr') for x in a.reader.ledger)
 
 
 @pytest.mark.parametrize('field,value,reason',[
@@ -194,7 +222,7 @@ def test_changed_acquisition_state(tmp_path,synthetic,change):
         client.get_world=world
     if change=='weather':
         n=[0]
-        def weather():n[0]+=1;return NS(wetness=float(n[0]))
+        def weather():n[0]+=1;return NS(**{**vars(w.weather),'wetness':float(n[0])})
         w.get_weather=weather
     if change=='map':
         n=[0]
