@@ -24,6 +24,23 @@ UNKNOWN = ['complete road mesh','all collision shapes','physical material/fricti
 FILES = ('server_status','environment','world_settings','actor_inventory','route_geometry',
          'route_comparison','static_obstacles','regulatory_elements','audit_results','api_call_ledger')
 
+# CARLA 0.9.16 rpc/WeatherParameters.h: numeric state and static presets.
+# Keep alphabetical field order (as in scalars), without importing the SDK.
+WEATHER_FIELDS = (
+    'cloudiness', 'dust_storm', 'fog_density', 'fog_distance', 'fog_falloff',
+    'mie_scattering_scale', 'precipitation', 'precipitation_deposits',
+    'rayleigh_scattering_scale', 'scattering_intensity', 'sun_altitude_angle',
+    'sun_azimuth_angle', 'wetness', 'wind_intensity',
+)
+WEATHER_PRESETS = frozenset((
+    'Default', 'ClearNoon', 'CloudyNoon', 'WetNoon', 'WetCloudyNoon',
+    'MidRainyNoon', 'HardRainNoon', 'SoftRainNoon', 'ClearSunset',
+    'CloudySunset', 'WetSunset', 'WetCloudySunset', 'MidRainSunset',
+    'HardRainSunset', 'SoftRainSunset', 'ClearNight', 'CloudyNight',
+    'WetNight', 'WetCloudyNight', 'SoftRainNight', 'MidRainyNight',
+    'HardRainNight', 'DustStorm',
+))
+
 
 def utc():
     return datetime.now(timezone.utc).isoformat()
@@ -109,6 +126,44 @@ def scalars(obj):
         require(type(value) is not float or math.isfinite(value), 'nonfinite '+name,'unknown')
         out[name] = value
     require(bool(out), 'empty required struct', 'unknown')
+    return out
+
+
+def weather_scalars(obj):
+    """Serialize the complete 0.9.16 weather state, not static preset objects."""
+    try:
+        public = {name for name in dir(obj) if not name.startswith('_')}
+    except Exception as exc:
+        raise AuditAbort('weather attributes unavailable', 'unknown') from exc
+    unexpected = public - set(WEATHER_FIELDS) - WEATHER_PRESETS
+    require(not unexpected, 'unexpected weather attributes: '+', '.join(sorted(unexpected)), 'unknown')
+    out = {}
+    for name in WEATHER_FIELDS:
+        try:
+            value = getattr(obj, name)
+        except Exception as exc:
+            raise AuditAbort('weather field unavailable: '+name, 'unknown') from exc
+        require(type(value) in (int, float), 'nonnumeric weather field: '+name, 'unknown')
+        try:
+            value = float(value)
+        except (ValueError, OverflowError) as exc:
+            raise AuditAbort('invalid weather number: '+name, 'unknown') from exc
+        require(math.isfinite(value), 'nonfinite weather field: '+name, 'unknown')
+        out[name] = value
+    try:
+        instance_fields = vars(obj)
+    except TypeError:  # Boost.Python WeatherParameters has no instance __dict__.
+        instance_fields = {}
+    except Exception as exc:
+        raise AuditAbort('weather instance attributes unavailable', 'unknown') from exc
+    for name in sorted(public & WEATHER_PRESETS):
+        try:
+            preset = getattr(obj, name)
+            declared = any(name in vars(base) for base in type(obj).__mro__)
+        except Exception as exc:
+            raise AuditAbort('weather preset unavailable: '+name, 'unknown') from exc
+        require(declared and name not in instance_fields and type(preset) is type(obj),
+                'invalid weather preset attribute: '+name, 'unknown')
     return out
 
 
@@ -201,7 +256,7 @@ class SceneAudit:
         self.e.write('world_settings',dict(status='pass',before=settings))
         require(settings.get('synchronous_mode') is False,'existing synchronous world or missing mode')
         start = snapshot(self.call('world',world,'get_snapshot'))
-        weather = scalars(self.call('world',world,'get_weather'))
+        weather = weather_scalars(self.call('world',world,'get_weather'))
         self.e.write('environment',dict(status='pass',server_version=server,client_version=client,
                                        map_name=m.name,episode=episode,weather=weather,snapshot_start=start))
         actors, inventory = self.actors(world)
@@ -261,7 +316,7 @@ class SceneAudit:
         self.e.write('traffic_window',dict(before=traffic_before,after=traffic_after,
                      status='pass' if traffic_before==traffic_after else 'fail'))
         require(traffic_before==traffic_after,'traffic actor state changed during audit')
-        end_weather = scalars(self.call('world',end_world,'get_weather'))
+        end_weather = weather_scalars(self.call('world',end_world,'get_weather'))
         require(weather==end_weather,'weather changed during audit')
         end = snapshot(self.call('world',end_world,'get_snapshot'))
         df,dt = end['frame']-start['frame'],end['elapsed_seconds']-start['elapsed_seconds']
