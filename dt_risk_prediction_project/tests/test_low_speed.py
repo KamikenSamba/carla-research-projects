@@ -89,6 +89,24 @@ def test_execute_requires_new_session_attestation():
     with pytest.raises(ValueError):entry.session_valid({},1,2100)
 
 
+@pytest.mark.parametrize('overlap,blocking,allowed',[('NONE',False,True),('Poles',False,False),('NONE',True,False),(None,True,False)])
+def test_overlap_is_not_misrepresented_as_physical_collision(tmp_path,overlap,blocking,allowed):
+    from test_idm_context import Transform,vector
+    h=ExploratoryHarness.__new__(ExploratoryHarness);h.directory=tmp_path
+    h.call=lambda fn,*args:fn(*args)
+    h.api=NS(Location=lambda **kw:NS(**kw),Vector3D=lambda **kw:NS(**kw),CityObjectLabel=NS(Roads='Roads',NONE='NONE'))
+    hit=NS(label=overlap,location=vector(0,0,.35))
+    h.world=NS(ground_projection=lambda p,d:NS(label='Roads',location=vector(p.x,p.y,0)),
+        cast_ray=lambda *args:[hit] if overlap else [],project_point=lambda *args:hit if blocking else None)
+    tf=Transform(0);tf.get_right_vector=lambda:vector(0,1,0)
+    if allowed:
+        h.initial_clearance(tf)
+        d=json.loads((tmp_path/'initial_clearance.json').read_text())
+        assert d['rays'][0]['untagged_overlap_collision_status']=='UNKNOWN' and d['route_audit'] is None
+    else:
+        with pytest.raises(EarlyStop):h.initial_clearance(tf)
+
+
 @pytest.mark.parametrize('fault',[None,'collision','rpc','external_actor'])
 def test_mock_physics_lifecycle_and_owned_sensor_cleanup(tmp_path,monkeypatch,fault):
     from test_idm_harness import World,Waypoint,Gate
@@ -109,6 +127,7 @@ def test_mock_physics_lifecycle_and_owned_sensor_cleanup(tmp_path,monkeypatch,fa
         get_waypoint_xodr=lambda road,lane,s:WP(s-170),get_waypoint=lambda p,**kw:WP(p.x))
     w.ground_projection=lambda p,d:NS(label='Roads',location=vector(p.x,p.y,0))
     w.cast_ray=lambda *args:[]
+    w.project_point=lambda *args:None
     w.get_weather=lambda:NS(**{k:0. for k in WEATHER_FIELDS})
     original_spawn=w.try_spawn_actor
     def spawn(bp,tf):
@@ -141,8 +160,8 @@ def test_mock_physics_lifecycle_and_owned_sensor_cleanup(tmp_path,monkeypatch,fa
             if fault=='external_actor':w.actors.append(NS(id=999,type_id='vehicle.external'))
         return w.frame
     w.tick=tick
-    api=NS(Location=lambda **kw:NS(**kw),Transform=lambda:NS(),VehicleControl=lambda **kw:NS(**kw),
-        CityObjectLabel=NS(Roads='Roads'))
+    api=NS(Location=lambda **kw:NS(**kw),Vector3D=lambda **kw:NS(**kw),Transform=lambda:NS(),VehicleControl=lambda **kw:NS(**kw),
+        CityObjectLabel=NS(Roads='Roads',NONE='NONE'))
     client=NS(get_world=lambda:w,get_client_version=lambda:'0.9.16',get_server_version=lambda:'0.9.16')
     h=ExploratoryHarness(client,api,config_for('trial1'),tmp_path,gate);result=h.run()
     if fault=='rpc':

@@ -21,7 +21,7 @@ from idm_scene_audit import weather_scalars
 
 @dataclass(frozen=True)
 class ExploratoryConfig(BrakeConfig):
-    mode: str = 'exploratory_model3_v1'
+    mode: str = 'exploratory_model3_v2'
     map_name: str = 'Town01_Opt'
     road: int = 8
     lane: int = -1
@@ -39,7 +39,7 @@ class ExploratoryConfig(BrakeConfig):
         if self.trial not in ('trial1','trial2','calibration'):
             raise ValueError('unknown exploratory trial')
         expected=asdict(BrakeConfig())
-        expected.update(mode='exploratory_model3_v1',map_name='Town01_Opt',road=8,
+        expected.update(mode='exploratory_model3_v2',map_name='Town01_Opt',road=8,
             lane=-1,follower_s=170,end_s=230,planned_route_length=60,
             trial=self.trial,target_speed=.5 if self.trial=='trial1' else 1.,
             speed_limit=.7 if self.trial=='trial1' else 1.2,
@@ -118,26 +118,7 @@ class ExploratoryHarness(BrakeHarness):
         save(self.directory/'local_route.json',dict(points=points,waypoints=metadata,
             geometry_sha256=geometry_sha256(points,metadata),route_audit=None,
             strict_scene_status='BLOCKED',local_observation_only=True))
-        # Local rays establish only sampled initial clearance, not whole-scene safety.
-        start=self.route[0].transform;f=start.get_forward_vector();right=start.get_right_vector()
-        def loc(x,y,z):return self.api.Location(x=start.location.x+f.x*x+right.x*y,
-            y=start.location.y+f.y*x+right.y*y,z=z)
-        ground=[]
-        for x,y in ((0,0),(-2.5,-1.2),(-2.5,1.2),(2.5,-1.2),(2.5,1.2)):
-            p=self.call(self.world.ground_projection,loc(x,y,2),3.)
-            self.fail_if(p is None or p.label!=self.api.CityObjectLabel.Roads,'initial_ground_not_road')
-            self.fail_if(abs(p.location.z)>.2,'initial_ground_height')
-            ground.append(dict(x=p.location.x,y=p.location.y,z=p.location.z,label=str(p.label)))
-        self.fail_if(max(p['z'] for p in ground)-min(p['z'] for p in ground)>.1,'initial_ground_nonplanar')
-        rays=[]
-        for z in (.35,.85,1.35):
-            for p,q in (((-2.6,-1.25),(2.6,1.25)),((-2.6,1.25),(2.6,-1.25)),
-                        ((-2.6,-1.25),(2.6,-1.25)),((-2.6,1.25),(2.6,1.25))):
-                hits=list(self.call(self.world.cast_ray,loc(*p,z),loc(*q,z)))
-                rays.append(dict(height=z,hits=[dict(label=str(h.label),x=h.location.x,y=h.location.y,z=h.location.z) for h in hits]))
-                save(self.directory/'initial_clearance.json',dict(ground=ground,rays=rays,
-                    limitations='finite rays do not prove complete collision geometry',route_audit=None))
-                self.fail_if(bool(hits),'initial_clearance_ray_hit')
+        self.initial_clearance(self.route[0].transform)
         # No TM or autopilot. Own all subsequent ticks and restore the original settings.
         settings=self.call(self.world.get_settings);settings.synchronous_mode=True;settings.fixed_delta_seconds=c.dt
         settings.substepping=True;settings.max_substep_delta_time=.01;settings.max_substeps=10
@@ -176,6 +157,37 @@ class ExploratoryHarness(BrakeHarness):
             initialization='bounded_manual_PI',autopilot_registration='not_requested',tm_created=False,
             physical_bounds=None,route_audit=None,strict_scene_audit='BLOCKED',exclusive_control_basis=
             'operator research session attestation; no observed other dynamic actors/clients; frame and actor interleaving gates'))
+
+    def initial_clearance(self,start):
+        # Local rays establish only sampled initial clearance, not whole-scene safety.
+        f=start.get_forward_vector();right=start.get_right_vector()
+        def loc(x,y,z):return self.api.Location(x=start.location.x+f.x*x+right.x*y,
+            y=start.location.y+f.y*x+right.y*y,z=z)
+        ground=[]
+        for x,y in ((0,0),(-2.5,-1.2),(-2.5,1.2),(2.5,-1.2),(2.5,1.2)):
+            p=self.call(self.world.ground_projection,loc(x,y,2),3.)
+            self.fail_if(p is None or p.label!=self.api.CityObjectLabel.Roads,'initial_ground_not_road')
+            self.fail_if(abs(p.location.z)>.2,'initial_ground_height')
+            ground.append(dict(x=p.location.x,y=p.location.y,z=p.location.z,label=str(p.label)))
+        self.fail_if(max(p['z'] for p in ground)-min(p['z'] for p in ground)>.1,'initial_ground_nonplanar')
+        rays=[]
+        for z in (.35,.85,1.35):
+            for p,q in (((-2.6,-1.25),(2.6,1.25)),((-2.6,1.25),(2.6,-1.25)),
+                        ((-2.6,-1.25),(2.6,-1.25)),((-2.6,1.25),(2.6,1.25))):
+                hits=list(self.call(self.world.cast_ray,loc(*p,z),loc(*q,z)))
+                begin,end=loc(*p,z),loc(*q,z)
+                direction=self.api.Vector3D(x=end.x-begin.x,y=end.y-begin.y,z=end.z-begin.z)
+                blocking=self.call(self.world.project_point,begin,direction,
+                    math.dist((begin.x,begin.y,begin.z),(end.x,end.y,end.z)))
+                rays.append(dict(height=z,overlap_channel_hits=[dict(label=str(h.label),x=h.location.x,y=h.location.y,z=h.location.z) for h in hits],
+                    sensor_trace_blocking_hit=(dict(label=str(blocking.label),x=blocking.location.x,
+                        y=blocking.location.y,z=blocking.location.z) if blocking else None),
+                    untagged_overlap_collision_status='UNKNOWN' if hits else None))
+                save(self.directory/'initial_clearance.json',dict(ground=ground,rays=rays,
+                    limitations='finite SensorTrace and OverlapChannel rays are not the vehicle collision channel; untagged overlap remains UNKNOWN',route_audit=None))
+                self.fail_if(blocking is not None,'initial_clearance_blocking_trace_hit')
+                self.fail_if(any(h.label!=getattr(self.api.CityObjectLabel,'NONE',None) for h in hits),
+                    'initial_clearance_tagged_obstacle')
 
     def step(self,*args,**kwargs):
         self.collision_gate();self.fail_if(len(self.rows)>=self.c.maximum_frames,'frame_limit')

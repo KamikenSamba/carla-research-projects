@@ -1,4 +1,4 @@
-# Model 3 exploratory low-speed protocol v1
+# Model 3 exploratory low-speed protocol v2
 
 This protocol does not certify or replace the strict Town01 scene audit. The
 Pole/Sidewalks results remain BLOCKED; route_audit and physical_bounds stay null.
@@ -9,7 +9,11 @@ Fixed location: Town01_Opt road8/section0/lane-1, increasing s170 to230 (about60
 Before spawning: exact native server identity/ports and OS resources, no observed
 other clients, no vehicle/walker/sensor/controller actors, map/XML identity,
 local waypoint continuity, five ground projections and twelve initial-volume
-rays. Finite rays and absence of collision events are not complete geometry proof.
+rays. OverlapChannel hits are not vehicle collision events. Untagged overlap hits
+remain UNKNOWN and require empty corresponding SensorTrace blocking projections;
+tagged obstacles or blocking projections stop the run. Finite rays and absence of
+collision events are not complete geometry proof. This is the explicitly authorized
+exploratory protocol, not a change to any strict scene gate.
 
 Trial1: target0.5m/s, cap0.7m/s, nominal3m drive, maximum12s drive.
 Trial2: only after successful Trial1 and complete cleanup; target1.0m/s,
