@@ -56,6 +56,24 @@ host/port/PID/開始時刻/TM portに既定値はない。ローカルOSのPID�
 
 ## API allowlistと禁止到達性
 
+### 速度標識triggerの意味分類（Issue #28）
+
+CARLA 0.9.16の[SpeedLimitComponent](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Traffic/SpeedLimitComponent.cpp)はoverlapでControllerへ速度制限を渡す。[TrafficSign](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/client/TrafficSign.h)のtrigger_volumeはactor記述のbboxで、[BoundingBoxCalculator](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Util/BoundingBoxCalculator.cpp)は標識の複数triggerを結合する場合がある。これは標識支柱/板のcollision形状ではない。標識の`actor.bounding_box`を別の物理形状と仮定して代用しない。
+
+旧gateは全traffic triggerのXY重なりを拒否した。新版は登録済み`traffic.speed_limit.30`〜`.120`（10刻み）だけを最大速度規制として分類し、有限のactor/trigger位置・両回転・正のextent・非退化world頂点を保存する。名前から不正な値を推測補完しない。corridor外なら非関係として記録。重なる場合は以下がすべて成立する時だけ規制領域として受理し、後続の物理障害物監査へ進む。
+
+- 既存`map.get_all_landmarks()`の速度標識type274のうちroute road上のものを候補とし、`landmark.get_lane_validities()`で対象laneを検証する。`world.get_traffic_sign(landmark)`によるSDKのsign-ID対応で対象actorに一意に結びつくことを要求し、位置の近さで対応を作らない。
+- landmarkの有限値・既知単位・XML road長内の位置・XML ID/種別/値/単位/向き・宣言されたlane validityを照合する。s減少経路の開始位置より上流側に標識があることも要求。欠落/曖昧/不明はUNKNOWN、不整合はFAILで停止する。orientationの名前だけから適用車線を推測せず、実際のvalidity範囲と検証済み経路方向を使う。
+- km/h、mph、m/sを明示変換し、actorのcontroller規制値km/hと一致することを要求する（数値表現差の絶対許容1e-6km/h、道路の幾何許容差は不変）。校正の既存速度上限1.2m/sが規制以内であることを確認する。標識の90を車両目標/安全上限へ採用する処理はない。
+
+**Town01の単位に注意**：[ObjectParser.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/opendrive/parser/ObjectParser.cpp)はRoadRunnerのSpeed_90等をtype274/value90/**mph**へ変換する。一方[WheeledVehicleAIController](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Vehicle/WheeledVehicleAIController.h)の規制値はkm/h。ローカルcarla.MapによるTown01確認でもmphだった。90mphを90km/hと同一視しない。対応する実actorが判明した場合、単位正規化後に不整合なら新gateもFAILとなる。実ID52とlandmarkの対応は過去証跡では未取得であり、今回の修正で実再監査PASSを保証しない。
+
+速度標識以外のstop/yield/traffic_lightのtrigger重なり拒否、信号のstop/affected waypoint、XMLの既存s近接条件、landmark>20m条件は維持する。他の未知traffic型はUNKNOWN。Level BB/Environment Objects/static.prop.meshの判定も維持し、規制として受理した標識の物理監査を省略しない。速度標識のtransform/trigger/valueを前後状態へ追加して厳密比較する。WorldSettings/天候/actor集合の既存比較は変更しない。
+
+追加allowlistは`landmark.get_lane_validities`（SDK内の地図データ読取り）と`world.get_traffic_sign`（SDK内部でGetActors/sign-ID照合）だけ。[World.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/client/World.cpp)で読み取り経路を確認。両方Reader/HealthGate/ledgerを通し、例外後の追加getterを禁止する。同じroad/landmark IDの照会結果は当該regulatory取得内だけcacheする。監査前後のmap hash/actor集合比較も継続する。
+
+正常完了時のSDKアクセス予算は従来の`437 + 2T + 4L + 4P`に`V + Q`を追加する。Vは実際に評価した同road速度landmarkのvalidity getter数、Qは対象lane候補のsign lookup数。少なくとも1つの速度triggerが重なる時に必要分を照会する。SDK内部通信回数とは別。候補がなければ推測許可せずUNKNOWN。RPC既定5秒/worker120秒を変更せず、追加lookupを次回の明示承認範囲に含める。
+
 ### static.prop.meshの幾何gate（Issue #26）
 
 `static.prop.mesh`だけを追加の幾何監査対象に分類する。他の未知actor、vehicle/walker/sensor/controllerの拒否は維持する。mesh名や椅子・テーブルという属性は安全根拠にしない。属性は文字列辞書と非空の`mesh_path`を要求し、名称による許可リストは設けない。
@@ -77,10 +95,12 @@ RPC timeout既定5秒、worker上限120秒は変更しない。次回の別途�
 | 対象 | 許可メソッド |
 |---|---|
 | client | get_server_version、get_client_version、get_world |
-| world | get_map、get_settings、get_weather、get_actors、get_snapshot、get_level_bbs、get_environment_objects |
+| world | get_map、get_settings、get_weather、get_actors、get_snapshot、get_level_bbs、get_environment_objects、get_traffic_sign |
 | map | to_opendrive、get_waypoint_xodr、get_all_landmarks |
 | waypoint | next |
 | traffic actor | get_transform、get_state、get_stop_waypoints、get_affected_lane_waypoints |
+| landmark | get_lane_validities |
+| prop | get_transform、bounding_box（property専用allowlist） |
 
 唯一の接続生成は子プロセス内の`carla.Client(host, port)`。これもledgerに記録する。`set_timeout`を含むsetterは使わず、監視親の120秒期限で監査子のみ終了させる。Client/world/getterの後始末としてCARLA RPCを送らない。workerは結果をflush後`os._exit`し、SDK destructorの復旧・cleanup呼出しを避ける。
 
@@ -94,9 +114,9 @@ RPC timeout既定5秒、worker上限120秒は変更しない。次回の別途�
 
 196点はXYZ、姿勢、s、road/section/lane、Driving、非junction、幅員を全点取得する。位置差≤1 cm、姿勢差≤0.01度、s差≤0.0001 m、幅員差≤0.000001 m。隣接点はnext(1.0)が単一で同じ車線を返し、位置/s差≤2 cmであることを確認。座標実長も参照との差≤1 cmで比較する。新しい許容差は読み取り照合の条件であり、制御/安全gateを変更しない。
 
-road8のXML signals/objectsはs=35→270の拡張範囲を調べる。map全landmark、traffic trigger、light stop/affected waypointを調べ、routeから20 m以内のlandmark/stop/affected、corridorに重なるtriggerがあれば拒否する。XMLのsが欠ける等の必要情報欠損はunknownで中止する。
+road8のXML signals/objectsはs=35→270の拡張範囲を調べる。map全landmark、traffic trigger、light stop/affected waypointを調べ、routeから20 m以内のlandmark/stop/affected、corridorに重なる非速度標識triggerがあれば拒否する。速度標識の重なりは上記Issue #28の厳格な意味照合を必要とする。XMLのsが欠ける等の必要情報欠損はunknownで中止する。
 
-全semantic labelのLevel BBとAnyのEnvironmentObjectsを取得する。経路ごとのsegmentに沿った幅員全幅＋保守的end cap（初期後端を含む）とのXY重なりとZ範囲を保存する。車線標高−0.1〜＋2.1 mとの重なりもある非ground descriptorは障害物として拒否。ground descriptorは保存するが走行可能meshの証明とはしない。triggerは高さにかかわらずXY重なりを拒否する保守的判定。全collision形状の網羅性はunknown。
+全semantic labelのLevel BBとAnyのEnvironmentObjectsを取得する。経路ごとのsegmentに沿った幅員全幅＋保守的end cap（初期後端を含む）とのXY重なりとZ範囲を保存する。車線標高−0.1〜＋2.1 mとの重なりもある非ground descriptorは障害物として拒否。ground descriptorは保存するが走行可能meshの証明とはしない。非速度標識triggerは高さにかかわらずXY重なりを拒否する保守的判定。全collision形状の網羅性はunknown。
 
 開始/終了UTC、snapshot frame/elapsed/platform timestamp、world episode/map/hash/settings/actor IDs・属性/weatherを取得前後で比較する。通常の非同期frame前進は許容し、巻戻り・frame/timeの不整合、状態変更は結果を失効させる。各getterの完全な同一frameを主張しない。両端の間だけで発生・復帰した変更の不存在は証明できない。
 
