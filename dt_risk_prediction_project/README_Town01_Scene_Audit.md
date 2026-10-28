@@ -56,6 +56,24 @@ host/port/PID/開始時刻/TM portに既定値はない。ローカルOSのPID�
 
 ## API allowlistと禁止到達性
 
+### static.prop.meshの幾何gate（Issue #26）
+
+`static.prop.mesh`だけを追加の幾何監査対象に分類する。他の未知actor、vehicle/walker/sensor/controllerの拒否は維持する。mesh名や椅子・テーブルという属性は安全根拠にしない。属性は文字列辞書と非空の`mesh_path`を要求し、名称による許可リストは設けない。
+
+各meshについて開始側で`actor.get_transform()`と`actor.bounding_box`を各1回取得する。後者はCARLA 0.9.16のproperty内部で`get_actor_bounding_box` RPCを呼ぶため、property専用allowlistとReader/HealthGateを通し、ledgerへ記録する。例外時はpoisonして後続getterを禁止する。id/type_id/attributesはSDKのactor記述値である。
+
+正の有限extent、有限の位置とyaw/pitch/rollを要求する。欠損・非数値・NaN/Infinity・ゼロ/負extent・取得例外・非有限変換結果はUNKNOWNで中断し、補完しない。local頂点をbbox固有の回転→bbox中心移動→actor回転→actor移動の順でworld座標へ変換する。既存`box_vertices`を再利用し、変更しない。異常に巨大な有限boxも縮小せずそのまま幾何評価する（演算結果が非有限ならUNKNOWN）。
+
+196点のlive routeを既存条件で検証後、既存`ribbons`の車線全幅と保守的端部cap、Z範囲`[min(route.z)-0.1, max(route.z)+2.1]`をそのまま使う。world頂点のXY凸包とcorridorが重なり、Zも重なる場合はINTERSECTとして拒否する。接触も重なりに含む。妥当な幾何情報で非干渉の場合だけCLEARとなる。これは幾何上の非干渉であり、完全なcollision形状・摩擦・制動安全性を保証しない。
+
+終了側のactor集合/属性比較後、同じmeshのtransformとbboxを再取得する。集合・属性・transform・local bbox・world頂点を厳密比較し、変化を拒否する。`static_prop_geometry.json`へ時刻付きの部分結果と前後比較を保存する。前後で元に戻る変化や全外部client/tick ownerの不在は確認できない。既存Level BB/environment、交通状態、天候、WorldSettings比較も継続する。幾何gateがCLEARでも監査全体の完了まではPASSではなく、`route_audit`/`physical_bounds`は常にnullのままである。
+
+正常完了時の追加呼出し量はmesh数Pに対し`get_transform`が2P、`bounding_box`propertyが2P（内部bbox RPCも2P）。追加SDKアクセスは4P。既存の明示getter数は`437 + 2T + 4L`（Tはtraffic actor、Lはtraffic light）なので、新版は`437 + 2T + 4L + 4P`、別にClient構築1回。P=110/T=57/L=36なら合計1135アクセス＋Client構築1回、うち追加bbox RPCは220回。これはSDKアクセス数で、全ネットワーク通信回数の保証ではない。途中失敗時はそこで中断するため減る。
+
+RPC timeout既定5秒、worker上限120秒は変更しない。次回の別途承認には追加property RPCを含める。110個の実bboxを取得できるか、120秒以内に終了できるかは未検証。外側からidentity/port/resource/worker heartbeatを監視し、異常時は監査workerのみ中止する。サーバ停止・閾値緩和・自動再試行は行わない。過去のPIDは現在の生存保証にならず、接続前にnative PID/開始FILETIME/実行パス・3ポート所有・資源と新規session申告を再確認する。
+
+根拠: CARLA 0.9.16の[Actor.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/client/Actor.cpp)、[Simulator.h](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/client/detail/Simulator.h)、[BoundingBox.h](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/geom/BoundingBox.h)。Actorのbbox propertyとTransform/BoundingBoxのローカル型試験は、実サーバのmesh bbox・接地・collisionの検証とは別である。
+
 | 対象 | 許可メソッド |
 |---|---|
 | client | get_server_version、get_client_version、get_world |
