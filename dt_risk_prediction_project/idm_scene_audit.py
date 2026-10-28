@@ -7,6 +7,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from idm_brake_config import finite
+from idm_scene_bbox import raw_bbox, obstacle_vertices
 from idm_brake_route import (ALL_LABELS, GROUND_LABELS, angle, box_vertices,
                              hull, overlaps, ribbons, segment_distance)
 
@@ -600,13 +601,25 @@ class SceneAudit:
                          corridor='per-segment full lane width with conservative end caps',
                          z_screen_m=[min(p[2] for p in points)-.1,max(p[2] for p in points)+2.1],
                          mesh_complete='unknown',collision_complete='unknown'))
-        def inspect(box,label,source,object_id=None):
-            vertices = box_vertices(box)
+        def inspect(box,label,source,object_id=None,index=None):
+            descriptor = raw_bbox(box)
+            raw_record = dict(source=source,label=label,id=object_id,index=index,descriptor=descriptor)
+            # Save raw attributes before any geometric validation, including NaN
+            # as a typed token. Partial evidence survives a local/native failure.
+            with (self.e.directory/'obstacle_bbox_raw.jsonl').open('a',encoding='utf-8') as raw:
+                raw.write(json.dumps(raw_record,allow_nan=False)+'\n')
+            try:
+                vertices,interpretation = obstacle_vertices(descriptor,source)
+            except Exception as exc:
+                records.append(dict(raw_record,status='UNKNOWN',reason=str(exc)))
+                save()
+                raise
             polygon = hull([(p[0],p[1]) for p in vertices])
             zmin,zmax = min(p[2] for p in vertices),max(p[2] for p in vertices)
             xy = any(overlaps(polygon,r) for r in corridor)
             z = zmin<=max(p[2] for p in points)+2.1 and zmax>=min(p[2] for p in points)-.1
-            record = dict(source=source,label=label,id=object_id,vertices=vertices,
+            record = dict(source=source,label=label,id=object_id,index=index,vertices=vertices,
+                          raw_descriptor=descriptor,extent_interpretation=interpretation,
                           z_min=zmin,z_max=zmax,xy_overlap=xy,z_overlap=z,
                           ground_descriptor=label in GROUND_LABELS)
             records.append(record)
@@ -616,11 +629,11 @@ class SceneAudit:
         for label in ALL_LABELS:
             boxes = list(self.call('world',world,'get_level_bbs',getattr(self.api.CityObjectLabel,label)))
             counts[label] = len(boxes)
-            for b in boxes: inspect(b,label,'level_bbs')
+            for i,b in enumerate(boxes): inspect(b,label,'level_bbs',index=i)
             save()
         objects = list(self.call('world',world,'get_environment_objects',self.api.CityObjectLabel.Any))
         counts['environment_Any'] = len(objects)
-        for obj in objects:
+        for i,obj in enumerate(objects):
             label = str(obj.type).rsplit('.',1)[-1]
-            inspect(obj.bounding_box,label,'environment_objects',obj.id)
+            inspect(obj.bounding_box,label,'environment_objects',obj.id,index=i)
         save('pass')
