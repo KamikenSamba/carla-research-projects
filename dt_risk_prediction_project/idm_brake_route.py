@@ -28,7 +28,7 @@ def validate_review_geometry(c,a):
     metadata=a.get('waypoints')
     if not isinstance(metadata,list) or len(metadata)!=c.route_point_count:
         raise ValueError('Town01 review requires every waypoint pose')
-    for s,p in zip(range(c.follower_s,c.end_s-1,-1),metadata):
+    for s,p in zip(c.route_s_samples,metadata):
         if (not isinstance(p,dict) or any(not finite(p.get(k)) for k in
                 ('s','yaw','pitch','roll','width')) or p['s']!=s
                 or any(type(p.get(k)) is not int or p[k]!=v for k,v in

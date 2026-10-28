@@ -361,14 +361,15 @@ class SceneAudit:
         actors, inventory = self.actors(world)
         props_before = self.prop_geometry(actors,'before')
         route, points, poses = [], [], []
-        for i,s in enumerate(range(250,54,-1)):
-            w = self.call('map',m,'get_waypoint_xodr',8,1,float(s))
+        route_step=1 if self.c.end_s>self.c.follower_s else -1
+        for i,s in enumerate(range(self.c.follower_s,self.c.end_s+route_step,route_step)):
+            w = self.call('map',m,'get_waypoint_xodr',self.c.road,self.c.lane,float(s))
             require(w is not None,'missing waypoint','unknown')
             p, q = vector(w.transform.location), pose(w)
             route.append(w);points.append(p);poses.append(q)
             self.e.write('route_geometry',dict(status='unknown',reason='acquisition in progress',
                                                observed_points=points,observed_waypoints=poses))
-            require((w.road_id,w.section_id,w.lane_id)==(8,0,1) and not w.is_junction
+            require((w.road_id,w.section_id,w.lane_id)==(self.c.road,self.c.section,self.c.lane) and not w.is_junction
                     and w.lane_type==self.api.LaneType.Driving,'lane/key/junction mismatch')
             ref = self.ref['waypoints'][i]
             require(math.dist(p,self.ref['points'][i])<=.01 and abs(q['s']-s)<=1e-4
@@ -377,7 +378,7 @@ class SceneAudit:
                     'live waypoint/reference mismatch')
             if i:
                 choices = list(self.call('waypoint',route[-2],'next',1.0))
-                require(len(choices)==1 and (choices[0].road_id,choices[0].section_id,choices[0].lane_id)==(8,0,1)
+                require(len(choices)==1 and (choices[0].road_id,choices[0].section_id,choices[0].lane_id)==(self.c.road,self.c.section,self.c.lane)
                         and abs(choices[0].s-s)<=.02
                         and math.dist(vector(choices[0].transform.location),p)<=.02,
                         'waypoint discontinuity/branch')
@@ -386,7 +387,7 @@ class SceneAudit:
         self.e.write('route_geometry',dict(status='pass',observed_points=points,observed_waypoints=poses,
                                           measured_length_m=length,point_count=len(points)))
         self.e.write('route_comparison',dict(status='pass',opendrive_sha256=digest,
-                    reference_geometry_sha256=self.ref['geometry_sha256'],point_count=196,
+                    reference_geometry_sha256=self.ref['geometry_sha256'],point_count=len(points),
                     position_tolerance_m=.01,angle_tolerance_deg=.01,length_tolerance_m=.01))
         corridor = ribbons(route,self.c.front_extent_limit)
         self.prop_gate(props_before,'before',points,corridor)
@@ -451,7 +452,7 @@ class SceneAudit:
                 require('s' in item.attrib,'XML regulatory s unavailable','unknown')
                 s = float(item.attrib['s'])
                 require(finite(s),'XML regulatory s nonfinite','unknown')
-                near = 35<=s<=270
+                near = min(self.c.follower_s,self.c.end_s)-20<=s<=max(self.c.follower_s,self.c.end_s)+20
                 records['xml'].append(dict(tag=item.tag,attributes=item.attrib,near_route=near));save()
                 require(not near,'XML regulatory/object near route')
         for mark in self.call('map',m,'get_all_landmarks'):
@@ -527,7 +528,9 @@ class SceneAudit:
         require(finite(mark.s) and mark.s>=0 and finite(mark.value) and mark.value>0,'invalid speed landmark value/position','unknown')
         length = float(road.get('length','nan'))
         require(finite(length) and mark.s<=length,'speed reference outside XML road','unknown')
-        require(mark.s>=self.c.follower_s,'speed applicability not upstream of decreasing-s route','unknown')
+        increasing=self.c.end_s>self.c.follower_s
+        require(mark.s<=self.c.follower_s if increasing else mark.s>=self.c.follower_s,
+                'speed applicability not upstream of '+('increasing' if increasing else 'decreasing')+'-s route','unknown')
         units = {'km/h':1.0,'mph':1.609344,'m/s':3.6}
         require(mark.unit in units,'unknown speed landmark unit','unknown')
         orientation = str(mark.orientation).rsplit('.',1)[-1]
@@ -589,7 +592,7 @@ class SceneAudit:
                 'speed actor/landmark unit-normalized limit mismatch')
         require(self.c.speed_limit*3.6<=min(kmh,comparison_kmh),'calibration speed cap exceeds speed regulation')
         return dict(reference,
-                    route_lane=self.c.lane,route_s_direction='decreasing',
+                    route_lane=self.c.lane,route_s_direction='increasing' if increasing else 'decreasing',
                     application='conservatively applies wherever validated trigger overlaps corridor',
                     exact_effect_region='unknown; descriptor may combine multiple triggers',
                     calibration_speed_cap_mps=self.c.speed_limit)

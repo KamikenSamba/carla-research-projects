@@ -116,6 +116,14 @@ RPC timeout既定5秒、worker上限120秒は変更しない。次回の別途�
 
 ## 監査内容と停止
 
+### 反対車線の独立候補（Issue #34）
+
+`configs/brake_calibration_town01_opposite_v3.json`はTown01 road8/section0/lane-1、s135→247（s増加方向）、113点、実長111.99716727741058mの別policy。配布route_auditはnullで、旧lane1の監査結果を流用しない。geometry canonical SHA-256は`655c83f3704533c7e856f2b5ff61e18ba396b978fd36a1ac2ec09fdb50c11b24`、XMLは既存Town01固定hash。任意map/road/lane/sを許可する拡張ではない。
+
+同じ読み取りCLIへ新configと独立geometryを指定する。waypoint数、next連続性、XMLの両端20m拡張範囲、速度標識の上流側をs方向に合わせる。許容差・距離条件・障害物corridor・Z帯・全label/Environment Objects・prop/交通/天候/設定の前後比較は維持。旧195mルートは旧policy/hash/設定で不変。
+
+制動目標1.0m/s、上限1.2m/s、PI gain/throttle/slew/brake/加速度/整定/停止gateは旧校正と同一。探索的距離予算43.34011m、弱い制動/長い遅延を仮定したstress予算109.00511mで、112m候補の後者余裕は約2.99m。仮定を実測性能下限や高速度域の保証へ転記しない。まず新しい実scene監査が必要で、監査PASSも実Model3の接地・physics・制動性能の確認とは別。
+
 ### World障害物の符号付きextent（Issue #32）
 
 CARLA0.9.16の[BoundingBoxCalculator.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Util/BoundingBoxCalculator.cpp)はstatic meshのcomponent scaleをextentへ成分乗算する。鏡像scaleでは有限の負extentが返る。SDK [BoundingBox.h](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/geom/BoundingBox.h)は各軸の正負を列挙して8頂点を作るため、extentの絶対値化は頂点集合の順序を変えるだけで、障害物を縮小・削除しない。
