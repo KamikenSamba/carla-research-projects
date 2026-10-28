@@ -540,6 +540,9 @@ class SceneAudit:
         nodes = [n for path in ('signals/signal','objects/object') for n in road.findall(path) if n.get('id')==str(mark.id)]
         require(len(nodes)==1,'speed landmark/XML reference missing or ambiguous','unknown')
         node = nodes[0]
+        reference['xml_source'] = dict(kind=node.tag,attributes=dict(node.attrib))
+        comparison_kmh = kmh
+        interpretation = 'ordinary_unit_conversion'
         require(finite(float(node.get('s','nan'))) and abs(float(node.get('s'))-mark.s)<=1e-4,
                 'speed landmark/XML position mismatch')
         require(node.get('orientation') in ('+','-','none') and
@@ -552,13 +555,38 @@ class SceneAudit:
             declared = [(int(v.get('fromLane')),int(v.get('toLane'))) for v in node.findall('validity')]
             require(bool(declared) and sorted(declared)==sorted(tuple(v) for v in ranges),'speed XML lane validity mismatch')
         else:
-            # 0.9.16 ObjectParser converts RoadRunner Speed_<value> objects to 274, mph.
+            # 0.9.16 ObjectParser inserts mph metadata without converting Speed_*.
+            # The generated SpeedLimitComponent passes that raw value to the
+            # km/h Controller contract. This is source-derived, NOT a measured
+            # Controller value or proof of this actor's component/spawn history.
             names = ('Speed_'+str(SPEED_TYPES[actor.type_id]),'speed_'+str(SPEED_TYPES[actor.type_id]))
             require(node.get('name') in names and mark.value==SPEED_TYPES[actor.type_id] and mark.unit=='mph',
                     'speed object/landmark value/unit mismatch')
-        require(math.isclose(kmh,SPEED_TYPES[actor.type_id],rel_tol=0,abs_tol=1e-6),
+            require(node.get('type')=='-1' and 'unit' not in node.attrib and 'value' not in node.attrib
+                    and not node.findall('validity'),
+                    'unreviewed speed object provenance or explicit speed metadata','unknown')
+            require(mark.name==node.get('name') and mark.sub_type==str(SPEED_TYPES[actor.type_id])
+                    and mark.country=='OpenDRIVE' and mark.is_dynamic is False,
+                    'speed object/parser metadata mismatch','unknown')
+            reference['parser_metadata'] = dict(name=mark.name,sub_type=mark.sub_type,
+                                               country=mark.country,is_dynamic=mark.is_dynamic)
+            comparison_kmh = mark.value
+            interpretation = 'carla_0.9.16_roadrunner_object_raw_value_kmh_contract'
+        reference['internal_interpretation'] = dict(
+            value=comparison_kmh,unit='km/h',basis=interpretation,
+            confidence=('source_derived_expected_contract' if node.tag=='object' else
+                        'declared_unit_normalization_not_runtime_measurement'),measured_controller_value=None,
+            actual_component_and_spawn_path='unknown',
+            source_version='0.9.16',
+            source_path=('ObjectParser -> TrafficLightManager generated speed sign -> '
+                         'SpeedLimitComponent -> WheeledVehicleAIController') if node.tag=='object' else
+                        'XML signal / Landmark declared unit normalization')
+        # Preserve limit_kmh as declared-unit conversion (e.g. 90 mph=144.84096).
+        # Only the separately documented object contract selects a different
+        # comparison value; ordinary signals retain their full unit conversion.
+        require(math.isclose(comparison_kmh,SPEED_TYPES[actor.type_id],rel_tol=0,abs_tol=1e-6),
                 'speed actor/landmark unit-normalized limit mismatch')
-        require(self.c.speed_limit*3.6<=kmh,'calibration speed cap exceeds speed regulation')
+        require(self.c.speed_limit*3.6<=min(kmh,comparison_kmh),'calibration speed cap exceeds speed regulation')
         return dict(reference,
                     route_lane=self.c.lane,route_s_direction='decreasing',
                     application='conservatively applies wherever validated trigger overlaps corridor',
