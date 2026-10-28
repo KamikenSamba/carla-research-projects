@@ -116,6 +116,14 @@ RPC timeout既定5秒、worker上限120秒は変更しない。次回の別途�
 
 ## 監査内容と停止
 
+### World障害物の符号付きextent（Issue #32）
+
+CARLA0.9.16の[BoundingBoxCalculator.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Util/BoundingBoxCalculator.cpp)はstatic meshのcomponent scaleをextentへ成分乗算する。鏡像scaleでは有限の負extentが返る。SDK [BoundingBox.h](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/geom/BoundingBox.h)は各軸の正負を列挙して8頂点を作るため、extentの絶対値化は頂点集合の順序を変えるだけで、障害物を縮小・削除しない。
+
+`level_bbs`/`environment_objects`のworld descriptorだけでこの解釈を使用する。取得直後にlabel/index/ID、属性の存在・Python型・原値・有限性・extent符号を`obstacle_bbox_raw.jsonl`へ保存し、NaN/InfinityはJSON数値にせず型付き文字表現で残す。geometryへ使うcorner_extentとoriginal_extentを分離する。欠損/非数値/非有限値/全軸ゼロはUNKNOWNで中断し、欠損を補完しない。平面bboxは既存のXY/Z干渉判定へ残す。異常時は対象のraw descriptor・件数・理由もstatic_obstaclesへ保存する。
+
+共通`box_vertices`、車両/propの正extent条件、速度標識条件は変更しない。角度/座標/走行corridor/Z screen/ground分類/干渉判定は既存どおり。署名付きextentを受理しても全障害物を幾何評価し、INTERSECTは引き続き拒否する。追加RPCはない。実SDKの符号付きbox頂点と比較するサーバなし試験を用意した。特定meshの全collision形状・車両物理性能を保証するものではない。
+
 サーバ/client versionがともに0.9.16、mapとOpenDRIVE hashが一致し、非同期worldであることを必須とする。既存vehicle/walker/sensor/controllerがあれば直ちに中断する。spectatorと監査対象traffic以外の未レビューactor（実行時に置かれたstatic.prop等）も、静的物体APIの網羅性を仮定せずunknownで拒否する。
 
 196点はXYZ、姿勢、s、road/section/lane、Driving、非junction、幅員を全点取得する。位置差≤1 cm、姿勢差≤0.01度、s差≤0.0001 m、幅員差≤0.000001 m。隣接点はnext(1.0)が単一で同じ車線を返し、位置/s差≤2 cmであることを確認。座標実長も参照との差≤1 cmで比較する。新しい許容差は読み取り照合の条件であり、制御/安全gateを変更しない。
