@@ -17,12 +17,14 @@ ALLOWLIST = {
     'map': ('to_opendrive','get_waypoint_xodr','get_all_landmarks'),
     'waypoint': ('next',),
     'traffic': ('get_transform','get_state','get_stop_waypoints','get_affected_lane_waypoints'),
+    'prop': ('get_transform',),
 }
+READONLY_PROPERTIES = {'prop': ('bounding_box',)}
 UNKNOWN = ['complete road mesh','all collision shapes','physical material/friction',
            'new vehicle contact/bbox/physics','braking performance/response latency',
            'absence of all external clients/tick owners']
 FILES = ('server_status','environment','world_settings','actor_inventory','route_geometry',
-         'route_comparison','static_obstacles','regulatory_elements','audit_results','api_call_ledger')
+         'route_comparison','static_obstacles','static_prop_geometry','regulatory_elements','audit_results','api_call_ledger')
 
 # CARLA 0.9.16 rpc/WeatherParameters.h: numeric state and static presets.
 # Keep alphabetical field order (as in scalars), without importing the SDK.
@@ -112,6 +114,12 @@ def pose(w):
     return data
 
 
+def rotation(r):
+    data = {k:getattr(r,k) for k in ('yaw','pitch','roll')}
+    require(all(finite(v) for v in data.values()),'nonfinite rotation','unknown')
+    return data
+
+
 def scalars(obj):
     """Serialize all public scalar struct fields, not callable methods."""
     out = {}
@@ -189,13 +197,21 @@ class Reader:
     def call(self, kind, obj, method, *args):
         require(not self.poisoned, 'additional API call prohibited after failure')
         require(method in ALLOWLIST.get(kind,()), 'API outside read-only allowlist: '+kind+'.'+method)
-        item = dict(sequence=len(self.ledger), api=kind+'.'+method,
+        return self._observe(kind+'.'+method, lambda: getattr(obj,method)(*args), args)
+
+    def attribute(self, kind, obj, name):
+        # Actor.bounding_box is a property backed by an SDK getter, not plain metadata.
+        require(not self.poisoned, 'additional API call prohibited after failure')
+        require(name in READONLY_PROPERTIES.get(kind,()), 'property outside read-only allowlist')
+        return self._observe(kind+'.'+name, lambda: getattr(obj,name), (), 'property')
+
+    def _observe(self, api, fn, args, access='method'):
+        item = dict(sequence=len(self.ledger), api=api, access=access,
                     args=[str(v) for v in args], started_utc=utc(), status='requested')
         self.ledger.append(item)
         self.evidence.write('api_call_ledger', self.ledger)
         try:
-            fn = getattr(obj,method)
-            result = self.health.call(fn,*args) if self.health else fn(*args)
+            result = self.health.call(fn) if self.health else fn()
         except BaseException as exc:
             self.poisoned = True
             item.update(status='failed', ended_utc=utc(), reason=type(exc).__name__+': '+str(exc))
@@ -233,9 +249,69 @@ class SceneAudit:
         self.e.write('actor_inventory',dict(status='pass', observed=inventory))
         require(not any(a.type_id.startswith(('vehicle.','walker.','sensor.','controller.')) for a in actors),
                 'unexpected vehicle/walker/sensor/controller')
-        require(all(a.type_id=='spectator' or a.type_id.startswith('traffic.') for a in actors),
+        require(all(a.type_id in ('spectator','static.prop.mesh') or a.type_id.startswith('traffic.') for a in actors),
                 'unreviewed actor type; obstacle inventory cannot certify it','unknown')
         return actors, inventory
+
+    def prop_geometry(self, actors, phase):
+        """Acquire only mesh props, with partial evidence and no getter after failure."""
+        previous = self.e.data.get('static_prop_geometry', {})
+        records = []
+        def save(status='unknown'):
+            self.e.write('static_prop_geometry',dict(previous, status=status, **{phase:records}))
+        for a in sorted((a for a in actors if a.type_id=='static.prop.mesh'),key=lambda a:a.id):
+            record = dict(id=a.id,type_id=a.type_id,status='UNKNOWN',started_utc=utc())
+            records.append(record);save()
+            try:
+                attributes = dict(a.attributes)
+                require(type(a.id) is int and a.id>0 and all(type(k) is str and type(v) is str
+                        for k,v in attributes.items()),'invalid mesh actor metadata','unknown')
+                path = attributes.get('mesh_path')
+                require(type(path) is str and bool(path.strip()) and '\x00' not in path,
+                        'missing/invalid mesh_path metadata','unknown')
+                record['attributes'] = attributes  # Names never certify geometry or physics.
+                tf = self.call('prop',a,'get_transform')
+                record['transform'] = dict(location=vector(tf.location),rotation=rotation(tf.rotation))
+                save()
+                box = self.reader.attribute('prop',a,'bounding_box')
+                record['local_bbox'] = dict(location=vector(box.location),extent=vector(box.extent),
+                                           rotation=rotation(box.rotation))
+                require(all(v>0 for v in record['local_bbox']['extent']),
+                        'nonpositive mesh bbox extent','unknown')
+                vertices = [list(p) for p in box_vertices(box,tf)]
+                require(all(finite(v) for p in vertices for v in p),
+                        'nonfinite mesh world vertices','unknown')
+                require(len(hull([(p[0],p[1]) for p in vertices]))>=3
+                        and max(p[2] for p in vertices)>min(p[2] for p in vertices),
+                        'degenerate mesh world vertices','unknown')
+                record.update(world_vertices=vertices,geometry_valid=True,ended_utc=utc())
+                save()
+            except Exception as exc:
+                record.update(status='UNKNOWN',reason=type(exc).__name__+': '+str(exc),ended_utc=utc())
+                save()
+                raise AuditAbort('mesh geometry unavailable: '+str(a.id),'unknown') from exc
+        save()
+        return records
+
+    def prop_gate(self, records, phase, points, corridor):
+        """Reuse the full existing obstacle corridor and inclusive Z screen."""
+        data = self.e.data['static_prop_geometry']
+        for record in records:
+            vertices = record['world_vertices']
+            poly = hull([(p[0],p[1]) for p in vertices])
+            xy = any(overlaps(poly,r) for r in corridor)
+            zmin,zmax = min(p[2] for p in vertices),max(p[2] for p in vertices)
+            z = zmin<=max(p[2] for p in points)+2.1 and zmax>=min(p[2] for p in points)-.1
+            record.update(xy_overlap=xy,z_overlap=z,z_min=zmin,z_max=zmax,
+                          status='INTERSECT' if xy and z else 'CLEAR')
+            self.e.write('static_prop_geometry',dict(data,**{phase:records},status='fail' if xy and z else 'unknown'))
+            require(not (xy and z),'mesh bbox intersects route: '+str(record['id']))
+
+    @staticmethod
+    def prop_state(records):
+        # Exact endpoint comparison: no movement/extent/rotation tolerance is introduced.
+        return [{k:r[k] for k in ('id','type_id','attributes','transform','local_bbox','world_vertices')}
+                for r in records]
 
     def inspect(self):
         server = self.call('client',self.client,'get_server_version')
@@ -260,6 +336,7 @@ class SceneAudit:
         self.e.write('environment',dict(status='pass',server_version=server,client_version=client,
                                        map_name=m.name,episode=episode,weather=weather,snapshot_start=start))
         actors, inventory = self.actors(world)
+        props_before = self.prop_geometry(actors,'before')
         route, points, poses = [], [], []
         for i,s in enumerate(range(250,54,-1)):
             w = self.call('map',m,'get_waypoint_xodr',8,1,float(s))
@@ -289,6 +366,7 @@ class SceneAudit:
                     reference_geometry_sha256=self.ref['geometry_sha256'],point_count=196,
                     position_tolerance_m=.01,angle_tolerance_deg=.01,length_tolerance_m=.01))
         corridor = ribbons(route,self.c.front_extent_limit)
+        self.prop_gate(props_before,'before',points,corridor)
         traffic_before = self.regulatory(m,xml,actors,points,corridor)
         self.obstacles(world,points,corridor)
         # Bracket the acquisition. Async forward progress is expected, not an extra tick.
@@ -305,6 +383,13 @@ class SceneAudit:
         self.e.write('actor_inventory',dict(status='pass' if inventory==end_inventory else 'fail',
                                            before=inventory,after=end_inventory))
         require(inventory==end_inventory,'actor inventory changed during audit')
+        props_after = self.prop_geometry(end_actors,'after')
+        self.prop_gate(props_after,'after',points,corridor)
+        same_props = self.prop_state(props_before)==self.prop_state(props_after)
+        self.e.write('static_prop_geometry',dict(self.e.data['static_prop_geometry'],
+                     status='pass' if same_props else 'fail',endpoint_state_equal=same_props,
+                     transient_changes_between_endpoints='unknown',collision_complete='unknown'))
+        require(same_props,'mesh actor geometry changed during audit')
         traffic_after = {}
         for a in end_actors:
             if a.type_id.startswith('traffic.'):
