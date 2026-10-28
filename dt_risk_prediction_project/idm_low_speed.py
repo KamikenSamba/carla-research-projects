@@ -21,13 +21,14 @@ from idm_scene_audit import weather_scalars
 
 @dataclass(frozen=True)
 class ExploratoryConfig(BrakeConfig):
-    mode: str = 'exploratory_model3_v2'
+    mode: str = 'exploratory_model3_v3'
     map_name: str = 'Town01_Opt'
     road: int = 8
     lane: int = -1
     follower_s: int = 170
     end_s: int = 230
     planned_route_length: float = 60
+    spawn_height: float = .1
     trial: str = 'trial1'
     target_speed: float = .5
     speed_limit: float = .7
@@ -39,7 +40,7 @@ class ExploratoryConfig(BrakeConfig):
         if self.trial not in ('trial1','trial2','calibration'):
             raise ValueError('unknown exploratory trial')
         expected=asdict(BrakeConfig())
-        expected.update(mode='exploratory_model3_v2',map_name='Town01_Opt',road=8,
+        expected.update(mode='exploratory_model3_v3',map_name='Town01_Opt',road=8,spawn_height=.1,
             lane=-1,follower_s=170,end_s=230,planned_route_length=60,
             trial=self.trial,target_speed=.5 if self.trial=='trial1' else 1.,
             speed_limit=.7 if self.trial=='trial1' else 1.2,
@@ -238,7 +239,10 @@ class ExploratoryHarness(BrakeHarness):
         else:Harness.cleanup(self,manage_tm=False)
         with self.collision_lock:events=list(self.collisions)
         self.result.update(collision_events=len(events),physical_bounds=None,route_audit=None,
-            motion_samples=len(self.rows),distance_m=(self.rows[-1]['route_progress_m'] if self.rows else None),
+            motion_samples=len(self.rows),route_progress_m=(self.rows[-1]['route_progress_m'] if self.rows else None),
+            distance_m=sum(math.hypot(b['x']-a['x'],b['y']-a['y']) for a,b in zip(self.rows,self.rows[1:])),
+            controlled_distance_m=sum(math.hypot(b['x']-a['x'],b['y']-a['y']) for a,b in zip(self.rows,self.rows[1:])
+                if b['phase'] in ('launch','braking','stop_confirm')),
             maximum_speed_mps=max((r['speed_planar_mps'] for r in self.rows),default=None))
         if events:
             self.result.update(status='early_stop',reason='collision_event',exit_code=2,calibration_valid=False)

@@ -1,4 +1,4 @@
-# Model 3 exploratory low-speed protocol v2
+# Model 3 exploratory low-speed protocol v3
 
 This protocol does not certify or replace the strict Town01 scene audit. The
 Pole/Sidewalks results remain BLOCKED; route_audit and physical_bounds stay null.
@@ -6,6 +6,11 @@ It requires an explicitly authorized, operator-attested research session and a
 supervised single tick owner. Default CLI execution is offline only.
 
 Fixed location: Town01_Opt road8/section0/lane-1, increasing s170 to230 (about60m).
+Spawn height0.10m: the prior0.40m initialization produced ordinary free fall
+az=-9.8m/s² and vz=-2.45m/s before first ground contact. Lower initial placement
+retains the |vz|2m/s gate; it does not change or teleport an existing actor.
+Recorded actual wheel center/radius and road projections justify this clearance.
+Initialization frames are excluded from controlled driving distance and calibration.
 Before spawning: exact native server identity/ports and OS resources, no observed
 other clients, no vehicle/walker/sensor/controller actors, map/XML identity,
 local waypoint continuity, five ground projections and twelve initial-volume
