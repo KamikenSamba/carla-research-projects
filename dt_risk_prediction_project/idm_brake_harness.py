@@ -125,7 +125,7 @@ class BrakeHarness(Harness):
         ids={a.id for a in self.call(self.world.get_actors)}
         self.fail_if(self.actor.id not in ids,'actor_disappeared',self.actor.id)
         self.fail_if(not self.initial_ids.issubset(ids),'external_actor_disappeared')
-        self.fail_if(ids!=self.initial_ids|{self.actor.id},'external_actor_appeared')
+        self.fail_if(ids!=self.initial_ids|{a.id for a in self.owned.values()},'external_actor_appeared')
         tf=self.call(self.actor.get_transform)
         raw['acquired']['position']={k:getattr(tf.location,k) if math.isfinite(getattr(tf.location,k)) else str(getattr(tf.location,k)) for k in ('x','y','z')}
         save(self.directory/'last_observation.json',raw)
