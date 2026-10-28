@@ -8,6 +8,8 @@ from pathlib import Path
 TOWN01_MODE = 'single_brake_town01_v2'
 TOWN01_MAP_SHA256 = '97a7f6ac67812567e5c8ee0599cd823b23f80f30f3f97c502212e38b72e2b709'
 TOWN01_LENGTH_M = 195.00316911583323
+TOWN01_OPPOSITE_MODE = 'single_brake_town01_opposite_v3'
+TOWN01_OPPOSITE_LENGTH_M = 111.99716727741058
 
 
 def finite(value):
@@ -65,6 +67,11 @@ class BrakeConfig:
                             follower_s=250, end_s=55, planned_route_length=TOWN01_LENGTH_M)
             if any(type(getattr(self,k)) is not int for k in ('road','section','lane','follower_s','end_s')):
                 raise ValueError('Town01 route identifiers and s samples must be integers')
+        if self.mode == TOWN01_OPPOSITE_MODE:
+            defaults.update(mode=TOWN01_OPPOSITE_MODE,map_name='Town01_Opt',road=8,lane=-1,
+                            follower_s=135,end_s=247,planned_route_length=TOWN01_OPPOSITE_LENGTH_M)
+            if any(type(getattr(self,k)) is not int for k in ('road','section','lane','follower_s','end_s')):
+                raise ValueError('Town01 route identifiers and s samples must be integers')
         for name,value in defaults.items():
             actual=getattr(self,name)
             if isinstance(value,(int,float)) and (not finite(actual) or actual!=value):
@@ -84,11 +91,16 @@ class BrakeConfig:
 
     @property
     def extended_route_audit(self):
-        return self.mode == TOWN01_MODE
+        return self.mode in (TOWN01_MODE,TOWN01_OPPOSITE_MODE)
 
     @property
     def route_point_count(self):
-        return self.follower_s-self.end_s+1
+        return abs(self.follower_s-self.end_s)+1
+
+    @property
+    def route_s_samples(self):
+        step=1 if self.end_s>self.follower_s else -1
+        return range(self.follower_s,self.end_s+step,step)
 
     def distance_report(self, *, route_length_m=None):
         # Exploratory envelope, not a claimed physical lower bound. Stop if the observed envelope fails.
@@ -145,6 +157,12 @@ def town01_config():
     """Only map/route/distance defaults differ; all control and safety values stay fixed."""
     return BrakeConfig(mode=TOWN01_MODE,map_name='Town01_Opt',road=8,
                        follower_s=250,end_s=55,planned_route_length=TOWN01_LENGTH_M)
+
+
+def town01_opposite_config():
+    """Versioned fixed opposite-lane route; all controls and safety limits unchanged."""
+    return BrakeConfig(mode=TOWN01_OPPOSITE_MODE,map_name='Town01_Opt',road=8,lane=-1,
+                       follower_s=135,end_s=247,planned_route_length=TOWN01_OPPOSITE_LENGTH_M)
 
 
 def load_config(path):
