@@ -64,9 +64,15 @@ CARLA 0.9.16の[SpeedLimitComponent](https://github.com/carla-simulator/carla/bl
 
 - 既存`map.get_all_landmarks()`の速度標識type274のうちroute road上のものを候補とし、`landmark.get_lane_validities()`で対象laneを検証する。`world.get_traffic_sign(landmark)`によるSDKのsign-ID対応で対象actorに一意に結びつくことを要求し、位置の近さで対応を作らない。
 - landmarkの有限値・既知単位・XML road長内の位置・XML ID/種別/値/単位/向き・宣言されたlane validityを照合する。s減少経路の開始位置より上流側に標識があることも要求。欠落/曖昧/不明はUNKNOWN、不整合はFAILで停止する。orientationの名前だけから適用車線を推測せず、実際のvalidity範囲と検証済み経路方向を使う。
-- km/h、mph、m/sを明示変換し、actorのcontroller規制値km/hと一致することを要求する（数値表現差の絶対許容1e-6km/h、道路の幾何許容差は不変）。校正の既存速度上限1.2m/sが規制以内であることを確認する。標識の90を車両目標/安全上限へ採用する処理はない。
+- 通常signalはkm/h、mph、m/sを明示変換し、actorの名目値km/hと一致することを要求する（数値表現差の絶対許容1e-6km/h、道路の幾何許容差は不変）。actor suffixは実Controller値の測定ではない。以下の限定object経路だけ比較値を分離する。校正の既存速度上限1.2m/sは宣言単位の換算値と内部解釈値の小さい方以内であることを要求する。標識値を車両目標/安全上限へ採用しない。
 
-**Town01の単位に注意**：[ObjectParser.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/opendrive/parser/ObjectParser.cpp)はRoadRunnerのSpeed_90等をtype274/value90/**mph**へ変換する。一方[WheeledVehicleAIController](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Vehicle/WheeledVehicleAIController.h)の規制値はkm/h。ローカルcarla.MapによるTown01確認でもmphだった。90mphを90km/hと同一視しない。対応する実actorが判明した場合、単位正規化後に不整合なら新gateもFAILとなる。実ID52とlandmarkの対応は過去証跡では未取得であり、今回の修正で実再監査PASSを保証しない。
+**Town01の単位と限定解釈（Issue #30）**：[ObjectParser.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/LibCarla/source/carla/opendrive/parser/ObjectParser.cpp)はRoadRunnerのSpeed_90等の数値を保持し、元XMLにないmph metadataを付加する。MapBuilder/Signal/Landmarkは換算しない。[TrafficLightManager.cpp](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Traffic/TrafficLightManager.cpp)の生成経路はsubtypeからBlueprintを選び、raw valueをSpeedLimitComponentへ渡す。同componentのoverlapはその値をそのままkm/h契約のControllerへ渡す。既存Actorを再利用する別分岐やBlueprint実行時状態を、このソース追跡だけで測定済みとはしない。
+
+この0.9.16のobject経路についてのみ、既存の一意SDK Actor対応・車線・上流位置・XML ID/向き照合に加え、XML objectが正確な`Speed_<登録値>`/`speed_<登録値>`、type=-1、明示unit/value/validityなし、Landmark name/sub_type/country/is_dynamicがparser生成値と一致し、valueが名目値、unitがmphであることを要求する。版は既存のclient/server両方0.9.16検査で固定する。未対応のSTATIC名、明示単位付きobject、生成経路不明は拒否する。
+
+保存形式は元の`value=90, unit=mph, limit_kmh=144.84096`を維持する。XML属性を`xml_source`、parser照合属性を`parser_metadata`、別の比較値90 km/hを`internal_interpretation`に根拠・source versionと共に保存する。内部解釈はsource由来の期待契約であり、`measured_controller_value=null`、実component/spawn履歴はunknown。通常signalの90mphを90km/hへ読み替えない。XMLに正当な90mphがあれば144.84096km/hとして照合し、名目90との不一致を拒否する。実ID52とLandmarkの対応は依然UNKNOWNであり、Phase B-2のBLOCKED判定とroute_audit/physical_bounds=nullは維持する。
+
+追加のLandmark name/sub_type/country/is_dynamicは取得済みMapデータの公開属性で、追加RPCはない。getter allowlist、呼出し量、timeout、worker期限は不変。ローカルSDK/実XMLとsynthetic Actor対応を組み合わせた試験は、実Actor52の対応確認ではない。
 
 速度標識以外のstop/yield/traffic_lightのtrigger重なり拒否、信号のstop/affected waypoint、XMLの既存s近接条件、landmark>20m条件は維持する。他の未知traffic型はUNKNOWN。Level BB/Environment Objects/static.prop.meshの判定も維持し、規制として受理した標識の物理監査を省略しない。速度標識のtransform/trigger/valueを前後状態へ追加して厳密比較する。WorldSettings/天候/actor集合の既存比較は変更しない。
 

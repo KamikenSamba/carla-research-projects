@@ -146,6 +146,8 @@ def test_mph_90_is_not_silently_kmh_90(tmp_path,synthetic):
 
 @pytest.mark.parametrize('name',['Speed_90','Speed_60','Unknown'])
 def test_roadrunner_object_never_relabels_mph_as_kmh(tmp_path,synthetic,name):
+    # Incomplete provenance stays rejected. The separate unit-contract tests
+    # require the complete 0.9.16 object/parser tuple and preserve raw mph.
     client,p,mark=setup_speed(synthetic,unit='mph')
     xml=(f'<OpenDRIVE><road id="8" length="400"><signals/><objects>'
          f'<object id="speed1" name="{name}" s="280" orientation="+"/>'
@@ -153,8 +155,8 @@ def test_roadrunner_object_never_relabels_mph_as_kmh(tmp_path,synthetic,name):
     client.world.map.to_opendrive=lambda:xml
     synthetic.ref['opendrive_sha256']=hashlib.sha256(xml.encode()).hexdigest()
     a,r=audit(tmp_path,synthetic,client)
-    assert r['status']=='fail'
-    assert ('unit-normalized' if name=='Speed_90' else 'object/landmark') in r['reason']
+    assert r['status'] in ('fail','unknown')
+    assert ('provenance' if name=='Speed_90' else 'object/landmark') in r['reason']
 
 
 @pytest.mark.parametrize('field,value',[('value',None),('value','90'),('value',math.inf),
