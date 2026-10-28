@@ -13,11 +13,12 @@ from idm_brake_route import (ALL_LABELS, GROUND_LABELS, angle, box_vertices,
 ALLOWLIST = {
     'client': ('get_world','get_server_version','get_client_version'),
     'world': ('get_map','get_settings','get_weather','get_actors','get_snapshot',
-              'get_level_bbs','get_environment_objects'),
+              'get_level_bbs','get_environment_objects','get_traffic_sign'),
     'map': ('to_opendrive','get_waypoint_xodr','get_all_landmarks'),
     'waypoint': ('next',),
     'traffic': ('get_transform','get_state','get_stop_waypoints','get_affected_lane_waypoints'),
     'prop': ('get_transform',),
+    'landmark': ('get_lane_validities',),
 }
 READONLY_PROPERTIES = {'prop': ('bounding_box',)}
 UNKNOWN = ['complete road mesh','all collision shapes','physical material/friction',
@@ -42,6 +43,27 @@ WEATHER_PRESETS = frozenset((
     'WetNight', 'WetCloudyNight', 'SoftRainNight', 'MidRainyNight',
     'HardRainNight', 'DustStorm',
 ))
+
+# Registered 0.9.16 TrafficLightManager speed models. Values are controller km/h.
+SPEED_TYPES = {'traffic.speed_limit.'+str(n): n for n in range(30,121,10)}
+
+
+def speed_state(actor, tf):
+    """Local trigger descriptor, never a physical sign-mesh bounding box."""
+    require(actor.type_id in SPEED_TYPES,'unknown speed-limit actor type','unknown')
+    box = actor.trigger_volume
+    state = dict(speed_kmh=SPEED_TYPES[actor.type_id],unit='km/h',
+                 value_source='registered actor type suffix; controller runtime value not measured',
+                 transform=dict(location=vector(tf.location),rotation=rotation(tf.rotation)),
+                 local_trigger=dict(location=vector(box.location),extent=vector(box.extent),rotation=rotation(box.rotation)))
+    require(all(v>0 for v in state['local_trigger']['extent']),'invalid speed trigger extent','unknown')
+    vertices = [list(p) for p in box_vertices(box,tf)]
+    require(all(finite(v) for p in vertices for v in p)
+            and len(hull([(p[0],p[1]) for p in vertices]))>=3
+            and max(p[2] for p in vertices)>min(p[2] for p in vertices),
+            'invalid speed trigger world geometry','unknown')
+    state['trigger_vertices'] = vertices
+    return state
 
 
 def utc():
@@ -367,7 +389,7 @@ class SceneAudit:
                     position_tolerance_m=.01,angle_tolerance_deg=.01,length_tolerance_m=.01))
         corridor = ribbons(route,self.c.front_extent_limit)
         self.prop_gate(props_before,'before',points,corridor)
-        traffic_before = self.regulatory(m,xml,actors,points,corridor)
+        traffic_before = self.regulatory(world,m,xml,actors,points,corridor)
         self.obstacles(world,points,corridor)
         # Bracket the acquisition. Async forward progress is expected, not an extra tick.
         end_world = self.call('client',self.client,'get_world')
@@ -397,6 +419,8 @@ class SceneAudit:
                 record = dict(position=vector(tf.location),rotation=scalars(tf.rotation))
                 if a.type_id.startswith('traffic.traffic_light'):
                     record['state'] = str(self.call('traffic',a,'get_state'))
+                if a.type_id.startswith('traffic.speed_limit.'):
+                    record['speed_limit'] = speed_state(a,tf)
                 traffic_after[str(a.id)] = record
         self.e.write('traffic_window',dict(before=traffic_before,after=traffic_after,
                      status='pass' if traffic_before==traffic_after else 'fail'))
@@ -413,11 +437,13 @@ class SceneAudit:
             snapshot_start=start,snapshot_end=end,single_frame_claim=False,
             note='No guarantee against transient changes between endpoint observations'))
 
-    def regulatory(self,m,xml,actors,points,corridor):
+    def regulatory(self,world,m,xml,actors,points,corridor):
         road = ET.fromstring(xml).find("./road[@id='8']")
         require(road is not None,'route road absent from XML')
         records = dict(xml=[],landmarks=[],traffic=[])
         traffic_before = {}
+        speed_marks = []
+        reference_cache = {}
         def save(): self.e.write('regulatory_elements',dict(status='unknown',observed=records))
         for path in ('signals/*','objects/*'):
             for item in road.findall(path):
@@ -432,17 +458,38 @@ class SceneAudit:
             distance = min(segment_distance(p,a,b) for a,b in zip(points,points[1:]))
             records['landmarks'].append(dict(id=str(mark.id),position=p,distance_xy_m=distance));save()
             require(distance>20,'landmark near route')
+            if getattr(mark,'type',None)=='274':speed_marks.append(mark)
         for a in actors:
             if not a.type_id.startswith('traffic.'):
                 continue
+            require(a.type_id in SPEED_TYPES or a.type_id in ('traffic.stop','traffic.yield','traffic.traffic_light'),
+                    'unknown traffic regulation actor type','unknown')
             tf = self.call('traffic',a,'get_transform')
             traffic_before[str(a.id)] = dict(position=vector(tf.location),rotation=scalars(tf.rotation))
-            vertices = box_vertices(a.trigger_volume,tf)
+            speed = speed_state(a,tf) if a.type_id in SPEED_TYPES else None
+            vertices = speed['trigger_vertices'] if speed is not None else box_vertices(a.trigger_volume,tf)
             polygon = hull([(p[0],p[1]) for p in vertices])
             record = dict(id=a.id,type_id=a.type_id,trigger_vertices=vertices,
                           z_min=min(p[2] for p in vertices),z_max=max(p[2] for p in vertices))
             records['traffic'].append(record);save()
-            require(not any(overlaps(polygon,r) for r in corridor),'traffic trigger overlaps route')
+            intersects = any(overlaps(polygon,r) for r in corridor)
+            if a.type_id in SPEED_TYPES:
+                state = speed
+                traffic_before[str(a.id)]['speed_limit'] = state
+                record.update(classification='speed_limit_application_region',speed_limit=state,
+                              route_xy_overlap=intersects,physical_shape='not this trigger; Level BB/environment audit required')
+                save()
+                if intersects:
+                    try:
+                        record['reference'] = self.speed_reference(world,a,road,speed_marks,reference_cache,record)
+                        record['assessment'] = 'validated_speed_regulation'
+                    except Exception as exc:
+                        record.update(assessment=getattr(exc,'status','unknown'),reason=str(exc));save()
+                        raise
+                else:record['assessment'] = 'outside_audit_corridor'
+                save()
+            else:
+                require(not intersects,'traffic trigger overlaps route')
             if a.type_id.startswith('traffic.traffic_light'):
                 record['state'] = str(self.call('traffic',a,'get_state'))
                 traffic_before[str(a.id)]['state'] = record['state']
@@ -456,6 +503,67 @@ class SceneAudit:
                         require(distance>20,'traffic stop/affected waypoint near route')
         self.e.write('regulatory_elements',dict(status='pass',observed=records))
         return traffic_before
+
+    def speed_reference(self,world,actor,road,marks,cache,record):
+        """Associate via the SDK sign-id lookup, not guessed actor/sign proximity."""
+        matches = []
+        for mark in marks:
+            if mark.road_id!=self.c.road:continue
+            key = str(mark.id)
+            if key not in cache:
+                ranges = list(self.call('landmark',mark,'get_lane_validities'))
+                require(bool(ranges) and all(isinstance(v,(tuple,list)) and len(v)==2
+                        and all(type(x) is int for x in v) and v[0]<=v[1]
+                        and not (v[0]<=0<=v[1]) for v in ranges),'invalid speed lane validities','unknown')
+                target = self.call('world',world,'get_traffic_sign',mark) if any(lo<=self.c.lane<=hi for lo,hi in ranges) else None
+                cache[key] = (mark,ranges,target.id if target is not None else None,target.type_id if target is not None else None)
+            item,ranges,actor_id,type_id = cache[key]
+            if actor_id==actor.id:
+                require(type_id==actor.type_id,'speed reference actor type changed')
+                matches.append((item,ranges))
+        require(len(matches)==1,'speed sign reference missing or ambiguous','unknown')
+        mark,ranges = matches[0]
+        require(finite(mark.s) and mark.s>=0 and finite(mark.value) and mark.value>0,'invalid speed landmark value/position','unknown')
+        length = float(road.get('length','nan'))
+        require(finite(length) and mark.s<=length,'speed reference outside XML road','unknown')
+        require(mark.s>=self.c.follower_s,'speed applicability not upstream of decreasing-s route','unknown')
+        units = {'km/h':1.0,'mph':1.609344,'m/s':3.6}
+        require(mark.unit in units,'unknown speed landmark unit','unknown')
+        orientation = str(mark.orientation).rsplit('.',1)[-1]
+        require(orientation in ('Positive','Negative','Both'),'unknown speed landmark orientation','unknown')
+        kmh = mark.value*units[mark.unit]
+        require(math.isfinite(kmh),'nonfinite normalized speed limit','unknown')
+        reference = dict(landmark_id=str(mark.id),actor_id=actor.id,road_id=mark.road_id,s=mark.s,
+                         value=mark.value,unit=mark.unit,limit_kmh=kmh,orientation=orientation,
+                         lane_validities=ranges,position=vector(mark.transform.location))
+        record['reference'] = reference  # Retain valid diagnostic values even on semantic mismatch.
+        nodes = [n for path in ('signals/signal','objects/object') for n in road.findall(path) if n.get('id')==str(mark.id)]
+        require(len(nodes)==1,'speed landmark/XML reference missing or ambiguous','unknown')
+        node = nodes[0]
+        require(finite(float(node.get('s','nan'))) and abs(float(node.get('s'))-mark.s)<=1e-4,
+                'speed landmark/XML position mismatch')
+        require(node.get('orientation') in ('+','-','none') and
+                orientation=={'+':'Positive','-':'Negative','none':'Both'}[node.get('orientation')],
+                'speed landmark/XML orientation mismatch')
+        if node.tag=='signal':
+            require(node.get('type')=='274' and node.get('unit')==mark.unit
+                    and finite(float(node.get('value','nan'))) and float(node.get('value'))==mark.value,
+                    'speed landmark/XML type/value/unit mismatch')
+            declared = [(int(v.get('fromLane')),int(v.get('toLane'))) for v in node.findall('validity')]
+            require(bool(declared) and sorted(declared)==sorted(tuple(v) for v in ranges),'speed XML lane validity mismatch')
+        else:
+            # 0.9.16 ObjectParser converts RoadRunner Speed_<value> objects to 274, mph.
+            names = ('Speed_'+str(SPEED_TYPES[actor.type_id]),'speed_'+str(SPEED_TYPES[actor.type_id]))
+            require(node.get('name') in names and mark.value==SPEED_TYPES[actor.type_id] and mark.unit=='mph',
+                    'speed object/landmark value/unit mismatch')
+        require(math.isclose(kmh,SPEED_TYPES[actor.type_id],rel_tol=0,abs_tol=1e-6),
+                'speed actor/landmark unit-normalized limit mismatch')
+        require(self.c.speed_limit*3.6<=kmh,'calibration speed cap exceeds speed regulation')
+        return dict(reference,
+                    route_lane=self.c.lane,route_s_direction='decreasing',
+                    application='conservatively applies wherever validated trigger overlaps corridor',
+                    exact_effect_region='unknown; descriptor may combine multiple triggers',
+                    calibration_speed_cap_mps=self.c.speed_limit)
 
     def obstacles(self,world,points,corridor):
         counts,records = {},[]
