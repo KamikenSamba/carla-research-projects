@@ -37,9 +37,36 @@ frame整合・RPC異常時抑止・所有actor cleanup・WorldSettings復元は�
 単車の2秒整定・停止・cleanupの実測成立が必須。独立の2台プロトコルでは
 同じ単一tick ownerで先行・追従を観測する。初期中心間隔20m、実bboxから
 バンパーgapを算出し、gap8m未満・TTC5秒未満は中止する案を使用する。
+実装はidm_pair_exploration.py。中心間隔20m、助走上限8m、整定後2秒の
+探索的収集とする。距離は20＋8＋2×1.2＋2×単車停止距離＋0.3×1.2
+＋実車体前端＋終端20mで計算し、60mを超える場合は拒否する。
+バンパーgapから8mと停止距離予算を引いても余裕が必要。
+前記18m・6秒案は距離予算が不足するため採用していない。
 2台の条件・距離予算・停止余裕・mock E2Eが成立するまで実行を拒否する。
 TM/Autopilotを使用せず、手動PIの追従結果と明示する。任意のIDM式から
 軌跡を人工生成しない。単車データをT推定へ渡さない。
+
+1frame内で2台へ命令してからworld.tickを1回だけ実行し、同frameの両車を
+観測する。各車にcollision sensorと独立の逆走・加速度履歴を持つ。
+pair_observations.csvとpair_raw.jsonlにlogical ID、actor ID、gap、相対速度、
+実入力と命令参照frameを保存する。操作者宣言・cooperative lease・外側OS監視は
+専用sessionの根拠であり、全外部client不在の完全な証明ではない。
+
+実行configのtrialはfollowing、single_runに正常完了した今回版の単車runを指定する。
+完了ラベルだけでなく、保存CSV/rawの2秒整定・0.5秒停止・cleanupを再検証する。
+safe_early_stopや停止結果欠落の単車では、Client生成より前に拒否する。
+既存v7の成功のみでは今回版の停止結果を代用できない。
+
+2秒収集は最初の無衝突データ取得用で、T識別に十分とはしない。手動gap
+controllerの見かけのIDM適合値を車両固有の不変特性と解釈しない。
+T推定には既存履歴schemaへの対応、規制・fallback等の有効context、最低速度、
+十分な追従時間・速度/gap変動が必要。未確認flagをFalseで埋めて有効化しない。
+
+2026-10-29の今回版単車は2秒整定に成功したが、ゼロ入力4frameで速度が
+0.0959→0.2747m/sへ再上昇し、coast_speed_reboundで安全早期終了した。
+brake未実施、collision0、413frame、cleanup・設定復元完了。
+この証跡はpairの実行条件を満たさない。2台コードはオフラインのみ検証し、
+現在の結果を使った実走・正式校正・T推定は行わない。
 
 CLIはRun_Exploratory_Following.py。--configだけではオフライン検証。
 明示--executeで既存の単一worker監視・native identity・cooperative leaseを使う。
