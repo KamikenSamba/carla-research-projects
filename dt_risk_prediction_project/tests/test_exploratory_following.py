@@ -49,6 +49,21 @@ def test_offline_entry_never_accesses_native_or_carla(tmp_path,monkeypatch,capsy
     assert json.loads(capsys.readouterr().out)['route_audit'] is None
 
 
+def test_zero_input_rebound_aborts_before_brake_or_throttle_resumption(tmp_path):
+    h=StabilityHarness.__new__(StabilityHarness);h.c=ResearchConfig();h.directory=tmp_path
+    h.actor=NS(id=1);h.reverse_monitor=NS(road=(1,0,0));h.ledger=lambda *a,**kw:None
+    commands=[];speeds=iter((.22,.25,.27,.275))
+    def step(phase,throttle,brake,row):
+        commands.append((throttle,brake))
+        return dict(row,frame=row['frame']+1,sim_time_s=row['sim_time_s']+.05,
+                    speed_planar_mps=next(speeds),throttle=throttle,brake=brake)
+    h.step=step
+    row=dict(frame=100,sim_time_s=5.,x=0.,y=0.,z=0.,speed_planar_mps=.08,throttle=.01)
+    with pytest.raises(EarlyStop,match='coast_speed_rebound'):h.stop_separated(row)
+    assert commands==[(0.,0.)]*4
+    assert not (tmp_path/'separated_stop_result.json').exists()
+
+
 @pytest.mark.parametrize('unstable',[False,True])
 def test_capture_synthetic_ready_coast_and_stop_or_bounded_rejection(tmp_path,unstable):
     h=StabilityHarness.__new__(StabilityHarness);h.c=ResearchConfig();h.directory=tmp_path
