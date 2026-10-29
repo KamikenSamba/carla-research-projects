@@ -78,7 +78,7 @@ class PairHarness(ExploratoryHarness):
         bp.set_attribute('role_name','exploratory_pair:leader')
         start.location.z+=self.c.spawn_height
         def spawn():
-            actor=self.world.try_spawn_actor(bp,start)
+            actor=self.spawn_exploratory_vehicle(bp,start)
             if actor is not None:self.owned['leader']=actor
             return actor
         self.actor=self.command('spawn_pair_leader',spawn)
@@ -113,15 +113,19 @@ class PairHarness(ExploratoryHarness):
         self.previous_velocity,self.accel_count=s['previous_velocity'],s['accel_count']
         self.reverse_monitor=s['reverse_monitor']
 
-    def pair_step(self, phase, controls, last):
+    def pair_step(self, phase, controls, last, *, issued_commands=None):
         self.collision_gate()
         self.fail_if(self.pair_frames>=self.c.maximum_frames,'frame_limit')
-        commands={}
-        for role in ('leader','follower'):
-            self.select(role);r=last.get(role)
-            steer=0. if r is None else max(-self.c.steer_cap,min(self.c.steer_cap,
-                -self.c.heading_kp*r['heading_error_deg']-self.c.lateral_kp*r['signed_lateral_m']))
-            commands[role]=self.issue(phase,*controls[role],steer)
+        commands={} if issued_commands is None else issued_commands
+        if issued_commands is None:
+            for role in ('leader','follower'):
+                self.select(role);r=last.get(role)
+                steer=0. if r is None else max(-self.c.steer_cap,min(self.c.steer_cap,
+                    -self.c.heading_kp*r['heading_error_deg']-self.c.lateral_kp*r['signed_lateral_m']))
+                commands[role]=self.issue(phase,*controls[role],steer)
+        else:
+            self.fail_if(set(commands)!={'leader','follower'} or any(
+                cmd['based_on_frame']!=self.last_frame for cmd in commands.values()),'issued_pair_command_frame_mismatch')
         self.t+=self.c.dt;self.tick();self.pair_frames+=1
         observed={}
         for role in ('leader','follower'):

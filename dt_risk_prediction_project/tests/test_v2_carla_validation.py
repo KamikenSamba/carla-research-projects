@@ -122,3 +122,109 @@ def test_single_synthetic_full_capture_v2_replay_stop_cleanup(tmp_path,monkeypat
     entry.verify_completed(tmp_path,result,h.c)
     snapshot=read_snapshot(tmp_path/'initial_snapshot.json')
     assert snapshot[0]['desired_speed_mps']==.5 and snapshot[0]['desired_time_headway_s']==1
+
+
+def test_pair_v2_capture_has_no_manual_pi_no_duplicate_commands_and_real_core_replay(tmp_path,monkeypatch):
+    from test_pair_exploration import pair_fixture
+    from idm_carla_validation import V2FleetHarness
+    monkeypatch.setattr('idm_pair_exploration.time.sleep',lambda *a:None)
+    monkeypatch.setattr('idm_brake_harness.LaunchController.step',lambda *a:pytest.fail('manual PI used'))
+    monkeypatch.setattr('idm_exploratory_following.ApproachPI.step',lambda *a:pytest.fail('gap PI used'))
+    monkeypatch.setattr(idm_controller,'import_carla',lambda:NS(VehicleControl=lambda **kw:NS(**kw)))
+    h,events=pair_fixture(tmp_path,klass=V2FleetHarness,target_speed=.2)
+    h.c=ValidationConfig(trial='fleet');h.sequence=0;h.restorer=None;h.call=lambda fn,*a,**kw:fn(*a,**kw)
+    h.world=NS(get_actors=lambda:[s['actor'] for s in h.slots.values()])
+    h.map=NS(get_waypoint=lambda location,**kw:Waypoint(location.x))
+    h.frame_unchanged=lambda:None
+    for i,role in enumerate(('leader','follower')):
+        actor=FakeActor(i+1,20. if role=='leader' else 0.,0.)
+        actor.type_id='vehicle.tesla.model3';actor.attributes={'role_name':'v2:'+role}
+        actor.bounding_box=NS(location=NS(x=0.,y=0.,z=0.),extent=NS(x=2.,y=1.,z=1.),rotation=NS(yaw=0.))
+        h.slots[role]['actor']=actor
+    observe=h.observe
+    def observed(phase,cmd):
+        r=observe(phase,cmd);actor=h.actor;actor.x=r['x'];actor.speed=r['speed_planar_mps']
+        r.update(vx=actor.speed,vy=0.,vz=0.,speed_mps=actor.speed,yaw=0.)
+        with (tmp_path/'calibration_observations.csv').open('a',newline='') as f:csv.DictWriter(f,FIELDS).writerow(r)
+        with (tmp_path/'calibration_raw.jsonl').open('a') as f:f.write(json.dumps(dict(carla_frame=r['frame'],frame_validated=True))+'\n')
+        return r
+    h.observe=observed
+    h.capture()
+    result=dict(status='completed',cleanup=dict(complete=True),collision_events=0,route_audit=None,physical_bounds=None,
+        motion_samples=len(h.rows),final_frame=h.last_frame)
+    entry.verify_completed(tmp_path,result,h.c)
+    assert sum(x[0]=='issue' for x in events)==2*sum(x[0]=='tick' for x in events)
+    rows=list(csv.DictReader((tmp_path/'v2_validation.csv').open()))
+    assert len(rows)==240 and {r['logical_actor_id'] for r in rows}=={'leader','follower'}
+    assert all(r['v2_leader_id']=='1' for r in rows if r['logical_actor_id']=='follower')
+
+
+@pytest.mark.parametrize('failure',[False,True,'velocity'])
+def test_snapshot_reconstruction_reuses_existing_spawner_one_velocity_request_and_no_height_retry(tmp_path,monkeypatch,failure):
+    from idm_v2_reconstruction import SnapshotRestorer
+    import Run_DT_Risk_V1 as baseline
+    from Run_DT_Risk_V2_IDM import save_snapshot
+    from test_idm_context import Transform,vector
+    from dataclasses import asdict
+    rows=[]
+    for role,x in (('follower',0.),('leader',20.)):
+        p=validation_parameters(role)
+        rows.append(dict(phase='snapshot',carla_frame=10,sim_time_s=2.,source_actor_id=10+x,logical_actor_id=role,
+            role_name='v2:'+role,blueprint_id='vehicle.tesla.model3',autopilot_enabled=False,x=x,y=0.,z=0.,
+            roll=0.,pitch=0.,yaw=0.,vx=0.,vy=0.,vz=0.,speed_mps=0.,
+            desired_time_headway_s=p.desired_time_headway_s,desired_speed_mps=p.desired_speed_mps))
+    save_snapshot(tmp_path/'snapshot.csv',rows)
+    params=tmp_path/'parameters.json';params.write_text(json.dumps({k:asdict(validation_parameters(k)) for k in ('leader','follower')}))
+    blueprint=NS(has_attribute=lambda k:True,set_attribute=lambda *a:None)
+    calls=[];velocity=[]
+    def spawn(bp,tf):
+        calls.append(tf)
+        if failure is True:return None
+        a=FakeActor(100+len(calls),tf.location.x,0.);a.type_id='vehicle.tesla.model3'
+        def set_velocity(v):
+            velocity.append(v)
+            if failure=='velocity':raise RuntimeError('synthetic server failure in initial velocity')
+        a.set_target_velocity=set_velocity
+        return a
+    gate=Gate()
+    h=NS(directory=tmp_path,owned={},call=gate.call,frame_unchanged=lambda:None,
+        command=lambda name,fn,*a,**kw:gate.call(fn,*a),world=NS(get_blueprint_library=lambda:NS(find=lambda _:blueprint),try_spawn_actor=spawn))
+    monkeypatch.setattr(baseline,'import_carla',lambda:NS(Rotation=lambda **kw:NS(**kw),
+        Location=lambda **kw:NS(**kw),Transform=lambda location,rotation:NS(location=location,rotation=rotation),Vector3D=vector))
+    restorer=SnapshotRestorer(h,tmp_path/'snapshot.json',params)
+    if failure is True:
+        with pytest.raises(EarlyStop,match='no_retry'):restorer.spawn(blueprint,Transform(0.))
+        assert len(calls)==1 and not velocity
+    elif failure=='velocity':
+        from idm_harness_host import ServerUnavailable
+        with pytest.raises(ServerUnavailable):restorer.spawn(blueprint,Transform(0.))
+        assert gate.poisoned and len(calls)==len(velocity)==1 and not restorer.spawned
+    else:
+        assert restorer.spawn(blueprint,Transform(0.)).id==101
+        assert restorer.spawn(blueprint,Transform(20.)).id==102
+        assert len(velocity)==2 and set(restorer.velocity_requests)=={'follower','leader'}
+        assert all(tf.location.z==.2 for tf in calls)
+        restorer.compare(rows)
+        assert json.loads((tmp_path/'reconstruction_comparison.json').read_text())['within_initial_state_tolerance']
+        with pytest.raises(EarlyStop,match='initial_state_mismatch'):restorer.compare([])
+
+
+@pytest.mark.parametrize('mismatch',[False,True])
+def test_replay_environment_difference_rejects_before_capture(tmp_path,monkeypatch,mismatch):
+    from idm_carla_validation import V2FleetHarness
+    from idm_pair_exploration import PairHarness
+    source=tmp_path/'source';source.mkdir();actual=tmp_path/'actual';actual.mkdir()
+    env=dict(versions=['0.9.16','0.9.16'],map='Carla/Maps/Town01_Opt',initial_actor_ids=[1],
+        original_settings=dict(synchronous_mode=False),applied_settings=dict(fixed_delta_seconds=.05),weather=dict(cloudiness=0))
+    (source/'environment.json').write_text(json.dumps(env))
+    changed=env|dict(weather=dict(cloudiness=10)) if mismatch else env
+    (actual/'environment.json').write_text(json.dumps(changed))
+    for name in ('vehicle_physics.json','leader_physics.json'):
+        for directory in (source,actual):
+            (directory/name).write_text(json.dumps(dict(mass=1845,wheels=[dict(radius=35,
+                position=dict(x=100 if directory==source else 102,y=0,z=0))])))
+    monkeypatch.setattr(PairHarness,'prepare',lambda *_:None)
+    h=V2FleetHarness.__new__(V2FleetHarness);h.source_run=source;h.directory=actual
+    if mismatch:
+        with pytest.raises(EarlyStop,match='environment_mismatch'):h.prepare()
+    else:h.prepare()

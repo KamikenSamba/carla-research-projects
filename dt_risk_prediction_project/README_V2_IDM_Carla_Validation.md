@@ -58,7 +58,37 @@ Run_V2_IDM_Carla_Validation.py --config <外部JSON>はオフライン。
 session attestation、OS・TCP両端の外側監視、cooperative leaseを使う。
 全外部client不在は完全証明できない。strict監査BLOCKED、route_audit/physical_bounds=null。
 単車の正常IDM走行・制御停止・cleanupが成立した場合のみ、複数車両とsnapshot再構成へ
-進む。不成立後に同じ設定を自動再試行しない。現時点のfleet/replay実行入口は拒否する。
+進む。不成立後に同じ設定を自動再試行しない。
+
+## 2台とsnapshot再構成
+
+trial=fleetは単車single_runの完了・raw/CSV・制御停止を接続前に再検証する。
+初期中心間隔20m、leaderはT=1.0s/v0=0.5m/s、followerはT=2.0s/v0=0.6m/s。
+他のIDM値は単車と同一。V2のleader検索と相互作用項が制御判断を担当し、
+PR #39の手動gap PIは使用しない。Fleetが発行済みの2台の命令を受け取ってから
+tickを1回だけ進める。gap8m・TTC5秒・全安全gate・個別collision sensorを維持。
+IDM6秒、両車の進行各3mまで、両車同時の0.5秒停止を要求する。
+20＋6×0.7＋5×0.7＋前端2.42511＋終端20=50.12511mは60m以内。
+さらに既存の経験停止距離を2倍する保守的予算も要求する。保証値は作らない。
+
+trial=replayは正常なfleetのsource_runも必須。同じ初期snapshotと解決済みパラメータを
+既存read_snapshot/resolve_parametersで読み、既存V1/V2 spawn_from_snapshotを再利用する。
+最初のspawn失敗で中止し、既存helperの高さ再試行は許可しない。
+静止snapshotのみ対応し、初期velocityの設定は各車1回のみ。走行中の速度強制やteleportはしない。
+元のhelperが初期zを最低0.2mとする点を記録し、その後は同じgear初期化・settleを行う。
+元の初期状態に対し位置0.02m・速度0.01m/s・heading0.2度以内でなければ走行を開始しない。
+map/version・weather・外部actor ID・適用/元WorldSettings・観測可能なphysics設定も照合する。
+engine RPMやサスペンション内部状態の完全復元を主張しない。
+wheel positionは現在のWheel Locationから取得されるため、静的physics設定の比較から
+分離して両側の実測値を保存する（[CARLA 0.9.16実装](https://github.com/carla-simulator/carla/blob/0.9.16/Unreal/CarlaUE4/Plugins/Carla/Source/Carla/Vehicle/CarlaWheeledVehicle.cpp#L452)）。
+mass・torque curve・gear比・friction等、取得した設定項目は引き続き比較する。
+
+prediction_states.csvは既存V2のPredictionState形式で、IDM区間の実CARLA将来軌跡を
+0.05秒刻み・6秒で保存する。near-missは既存detect_near_missesを使用し、
+閾値4m/接近速度1m/s/cooldown1秒を変更しない。collisionは共通sensor記録に残す。
+低速・gap安全gateのもとでeventがないことを、事故リスク検出の有効性の証明にしない。
+sourceとreplayの差は再構成の探索的再現性であり、Tの因果効果や予測精度改善と区別する。
+実測状態を固定したTの反実仮想加速度比較にも既存compute_idm_accelerationを使う。
 
 実験結果はRepository外に保存する。既存V2の通常runnerやTM比較をこの実験用
 入力制限の妥当性確認なしに安全と認定しない。T推定・事故リスク有効性評価は別段階。

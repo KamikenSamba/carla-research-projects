@@ -1,5 +1,6 @@
 """Bounded real-CARLA validation of the existing V2 IDMFleetController."""
 import csv
+import json
 from dataclasses import asdict, dataclass
 import logging
 import math
@@ -13,6 +14,10 @@ from idm_brake_metrics import FIELDS
 from idm_experiment_harness import EarlyStop, save
 from idm_staged_stop import StagedStop, stopped
 from Run_DT_Risk_V2_IDM import save_snapshot
+from Run_DT_Risk_V1 import detect_near_misses
+from dt_risk_common import PredictionState, prediction_state_fieldnames, risk_event_fieldnames, to_row
+from idm_pair_exploration import PairHarness
+from idm_v2_reconstruction import SnapshotRestorer, physics_settings
 
 
 @dataclass(frozen=True)
@@ -98,7 +103,8 @@ V2_FIELDS=['observation_frame','command_based_on_frame','observation_time_s','lo
 
 class V2SingleHarness(ExploratoryHarness):
     def initialize_fleet(self,actors,last):
-        self.parameters={k:validation_parameters(k) for k in actors}
+        self.parameters=(self.restorer.parameters if getattr(self,'restorer',None) else
+                         {k:validation_parameters(k) for k in actors})
         self.last_observed=last;self.sent={};self.actuators={k:BoundedV2Actuator(self.c) for k in actors}
         self.logical_actors=actors
         def sink(logical,actor,request,reason):
@@ -124,10 +130,25 @@ class V2SingleHarness(ExploratoryHarness):
                 **{k:r[k] for k in ('x','y','z','roll','pitch','yaw','vx','vy','vz','speed_mps')},
                 desired_time_headway_s=p.desired_time_headway_s,desired_speed_mps=p.desired_speed_mps))
         save_snapshot(self.directory/'initial_snapshot.csv',snapshot)
+        if getattr(self,'restorer',None):self.restorer.compare(snapshot)
+        self.prediction_origin=self.t;self.near_events=[];self.near_regions=[];self.near_cooldown={}
+        with (self.directory/'prediction_states.csv').open('x',encoding='utf-8',newline='') as f:
+            csv.DictWriter(f,prediction_state_fieldnames()).writeheader()
+        with (self.directory/'risk_events.csv').open('x',encoding='utf-8',newline='') as f:
+            csv.DictWriter(f,risk_event_fieldnames()).writeheader()
         with (self.directory/'v2_validation.csv').open('x',encoding='utf-8',newline='') as f:
             csv.DictWriter(f,V2_FIELDS).writeheader()
 
     def log_idm(self,requests,observed):
+        new_events=len(self.near_events)
+        args=NS(near_miss_distance_m=4.,min_closing_speed_mps=1.,near_miss_cooldown_s=1.,near_miss_region_radius_m=4.)
+        self.frame_unchanged()
+        detect_near_misses({k:GuardedActor(self,a) for k,a in self.logical_actors.items()},
+            self.near_events,self.near_regions,0.,self.t-self.prediction_origin,args,self.near_cooldown)
+        self.frame_unchanged()
+        for event in self.near_events[new_events:]:
+            with (self.directory/'risk_events.csv').open('a',encoding='utf-8',newline='') as f:
+                csv.DictWriter(f,risk_event_fieldnames()).writerow(to_row(event))
         for request in requests:
             logical=request['logical_actor_id'];r=observed[logical];p=self.parameters[logical]
             row=dict(observation_frame=r['frame'],command_based_on_frame=r['command_based_on_frame'],
@@ -139,6 +160,11 @@ class V2SingleHarness(ExploratoryHarness):
                 maximum_deceleration_parameter_mps2=p.max_decel_mps2)
             with (self.directory/'v2_validation.csv').open('a',encoding='utf-8',newline='') as f:
                 csv.DictWriter(f,V2_FIELDS).writerow(row);f.flush()
+            prediction=PredictionState(prediction_frame=r['frame'],prediction_time_s=self.t-self.prediction_origin,
+                logical_actor_id=logical,carla_actor_id=r['actor_id'],autopilot_enabled=False,
+                **{k:r[k] for k in ('x','y','z','yaw','vx','vy','vz','speed_mps')})
+            with (self.directory/'prediction_states.csv').open('a',encoding='utf-8',newline='') as f:
+                csv.DictWriter(f,prediction_state_fieldnames()).writerow(to_row(prediction));f.flush()
 
     def capture(self):
         with (self.directory/'calibration_observations.csv').open('x',encoding='utf-8',newline='') as f:
@@ -179,3 +205,68 @@ class V2SingleHarness(ExploratoryHarness):
                     end_stop='separate staged stop; no mandatory zero-input coasting'))
                 return
         raise EarlyStop('v2_controlled_stop_timeout',self.actor.id)
+
+
+class V2FleetHarness(PairHarness):
+    initialize_fleet=V2SingleHarness.initialize_fleet
+    log_idm=V2SingleHarness.log_idm
+
+    def __init__(self,*args,single_stop_m,source_run=None,**kwargs):
+        super().__init__(*args,single_stop_m=single_stop_m,**kwargs)
+        self.source_run=source_run
+        self.restorer=(SnapshotRestorer(self,source_run/'initial_snapshot.json',source_run/'resolved_idm_parameters.json')
+                       if source_run is not None else None)
+
+    def prepare(self):
+        super().prepare()
+        if self.source_run is not None:
+            source=json.loads((self.source_run/'environment.json').read_text(encoding='utf-8'))
+            actual=json.loads((self.directory/'environment.json').read_text(encoding='utf-8'))
+            keys=('versions','map','initial_actor_ids','original_settings','applied_settings','weather')
+            comparison={k:source[k]==actual[k] for k in keys}
+            wheel_positions={}
+            for name in ('vehicle_physics.json','leader_physics.json'):
+                old=json.loads((self.source_run/name).read_text(encoding='utf-8'))
+                new=json.loads((self.directory/name).read_text(encoding='utf-8'))
+                comparison[name]=physics_settings(old)==physics_settings(new)
+                wheel_positions[name]=dict(source=[w['position'] for w in old.get('wheels',[])],
+                    actual=[w['position'] for w in new.get('wheels',[])],compared_as_static_settings=False)
+            save(self.directory/'physics_wheel_position_observations.json',wheel_positions)
+            save(self.directory/'source_environment_comparison.json',comparison)
+            self.fail_if(not all(comparison.values()),'snapshot_source_environment_mismatch')
+
+    def spawn_exploratory_vehicle(self,bp,tf):
+        return self.restorer.spawn(bp,tf) if self.restorer else super().spawn_exploratory_vehicle(bp,tf)
+
+    def capture(self):
+        from idm_pair_exploration import PAIR_FIELDS
+        for name,fields in (('calibration_observations.csv',FIELDS),('pair_observations.csv',PAIR_FIELDS)):
+            with (self.directory/name).open('x',encoding='utf-8',newline='') as f:csv.DictWriter(f,fields).writeheader()
+        last={}
+        for _ in range(40):last=self.pair_step('settle',{k:(0.,0.) for k in self.slots},last)
+        self.fail_if(not all(local_pose_ok(r) for r in self.rows[-20:]),'pair_initial_not_stable')
+        origins={k:r['route_progress_m'] for k,r in last.items()}
+        self.initialize_fleet({k:s['actor'] for k,s in self.slots.items()},last)
+        for _ in range(120):
+            self.frame_unchanged();requests=self.fleet.step(self.t);self.frame_unchanged()
+            observed=self.pair_step('launch',None,last,issued_commands=dict(self.sent))
+            for k,r in observed.items():
+                self.fail_if(r['route_progress_m']-origins[k]>3.,'v2_fleet_distance_limit',r['actor_id'])
+            last.update(observed);self.log_idm(requests,last)
+        self.fail_if(any(r['route_progress_m']-origins[k]<.1 for k,r in last.items()),'v2_forward_progress_insufficient')
+        reference={k:dict(frame=r['frame'],sim_time_s=r['sim_time_s'],progress_m=r['route_progress_m'],speed_mps=r['speed_planar_mps']) for k,r in last.items()}
+        controllers={k:StagedStop(r['throttle'],self.c.dt) for k,r in last.items()};window=[]
+        for _ in range(100):
+            controls={k:ctl.step(last[k]['speed_planar_mps']) for k,ctl in controllers.items()}
+            last.update(self.pair_step('braking',{k:(x['throttle'],x['brake']) for k,x in controls.items()},last))
+            window=window+[dict(last)] if all(stopped(r) for r in last.values()) else []
+            if len(window)>=11:
+                save(self.directory/'v2_completion.json',dict(idm_vehicle_count=2,idm_frames=120,
+                    stop_request=reference,stop_onset_frame=window[0]['leader']['frame'],final_frame=self.last_frame,
+                    stop_distance_m={k:window[0][k]['route_progress_m']-ref['progress_m'] for k,ref in reference.items()},
+                    stop_time_s=window[0]['leader']['sim_time_s']-reference['leader']['sim_time_s'],continuous_stop_s=.5,
+                    near_miss_events=len(self.near_events),strict_scene_audit='BLOCKED',route_audit=None,physical_bounds=None,
+                    control='existing V2 IDM/PID/feed-forward plus bounded actuator',
+                    snapshot_reconstructed=self.restorer is not None))
+                return
+        raise EarlyStop('v2_fleet_stop_timeout')

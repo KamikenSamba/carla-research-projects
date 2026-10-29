@@ -137,7 +137,7 @@ class ExploratoryHarness(BrakeHarness):
         bp.set_attribute('role_name','exploratory_low_speed:vehicle')
         tf=self.route[0].transform;tf.location.z+=c.spawn_height
         def spawn():
-            a=self.world.try_spawn_actor(bp,tf)
+            a=self.spawn_exploratory_vehicle(bp,tf)
             if a is not None:self.owned['vehicle']=a
             return a
         self.actor=self.command('spawn_exploratory_model3',spawn)
@@ -165,6 +165,9 @@ class ExploratoryHarness(BrakeHarness):
             initialization='bounded_manual_PI',autopilot_registration='not_requested',tm_created=False,
             physical_bounds=None,route_audit=None,strict_scene_audit='BLOCKED',exclusive_control_basis=
             'operator research session attestation; no observed other dynamic actors/clients; frame and actor interleaving gates'))
+
+    def spawn_exploratory_vehicle(self,bp,tf):
+        return self.world.try_spawn_actor(bp,tf)
 
     def initialize_drive_gear(self):
         # CARLA DefaultMovementComponent sets target gear only on reverse transition
