@@ -1,4 +1,4 @@
-# Model 3 exploratory low-speed protocol v4
+# Model 3 exploratory low-speed protocol v5
 
 This protocol does not certify or replace the strict Town01 scene audit. The
 Pole/Sidewalks results remain BLOCKED; route_audit and physical_bounds stay null.
@@ -28,7 +28,10 @@ exploratory protocol, not a change to any strict scene gate.
 Trial1: target0.5m/s, cap0.7m/s, nominal3m drive, maximum12s drive.
 Trial2: only after successful Trial1 and complete cleanup; target1.0m/s,
 cap1.2m/s, nominal10m drive, maximum25s drive. Manual PI throttle cap0.10,
-slew0.10/s, original gains. These exploratory trials use brake0.10, five-second
+slew0.02/s (stricter than the existing0.10/s cap), original gains. This bounded
+change responds to the first launch frame reporting longitudinal velocity-0.0252m/s
+at throttle0.005. Backward-motion and acceleration gates are unchanged; the
+underlying transient is not claimed diagnosed. These exploratory trials use brake0.10, five-second
 stop deadline, continuous stop0.5s. No TM, autopilot, velocity forcing or teleport.
 
 Calibration: only after Trial2 succeeds. Reuse the existing calibration capture,

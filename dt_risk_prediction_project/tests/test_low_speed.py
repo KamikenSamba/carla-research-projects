@@ -29,9 +29,10 @@ def test_unauthorized_policy_change_rejected(change):
 
 def test_existing_control_and_safety_values_are_preserved():
     base=asdict(BrakeConfig());c=asdict(config_for('calibration'))
-    for k in ('dt','throttle_cap','throttle_slew_per_second','speed_kp','speed_ki','brake','ready_seconds',
+    for k in ('dt','throttle_cap','speed_kp','speed_ki','brake','ready_seconds',
         'acceleration_peak','acceleration_sustained','lateral_limit','end_clearance','stopped_seconds','response_timeout'):
         assert c[k]==base[k]
+    assert c['throttle_slew_per_second']==.02<=base['throttle_slew_per_second']
     controller=LaunchController(config_for('trial1'));last=0
     for _ in range(300):
         value=controller.step(0)

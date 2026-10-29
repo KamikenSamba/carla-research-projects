@@ -21,7 +21,7 @@ from idm_scene_audit import weather_scalars
 
 @dataclass(frozen=True)
 class ExploratoryConfig(BrakeConfig):
-    mode: str = 'exploratory_model3_v4'
+    mode: str = 'exploratory_model3_v5'
     map_name: str = 'Town01_Opt'
     road: int = 8
     lane: int = -1
@@ -29,6 +29,7 @@ class ExploratoryConfig(BrakeConfig):
     end_s: int = 230
     planned_route_length: float = 60
     spawn_height: float = .1
+    throttle_slew_per_second: float = .02
     trial: str = 'trial1'
     target_speed: float = .5
     speed_limit: float = .7
@@ -40,7 +41,8 @@ class ExploratoryConfig(BrakeConfig):
         if self.trial not in ('trial1','trial2','calibration'):
             raise ValueError('unknown exploratory trial')
         expected=asdict(BrakeConfig())
-        expected.update(mode='exploratory_model3_v4',map_name='Town01_Opt',road=8,spawn_height=.1,
+        expected.update(mode='exploratory_model3_v5',map_name='Town01_Opt',road=8,spawn_height=.1,
+            throttle_slew_per_second=.02,
             lane=-1,follower_s=170,end_s=230,planned_route_length=60,
             trial=self.trial,target_speed=.5 if self.trial=='trial1' else 1.,
             speed_limit=.7 if self.trial=='trial1' else 1.2,
