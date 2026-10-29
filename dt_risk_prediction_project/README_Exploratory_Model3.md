@@ -1,4 +1,4 @@
-# Model 3 exploratory low-speed protocol v6
+# Model 3 exploratory low-speed protocol v7
 
 This protocol does not certify or replace the strict Town01 scene audit. The
 Pole/Sidewalks results remain BLOCKED; route_audit and physical_bounds stay null.
@@ -31,8 +31,24 @@ cap1.2m/s, nominal10m drive, maximum25s drive. Manual PI throttle cap0.10,
 slew0.02/s (stricter than the existing0.10/s cap), original gains. This bounded
 change responds to the first launch frame reporting longitudinal velocity-0.0252m/s
 at throttle0.005. Backward-motion and acceleration gates are unchanged; the
-underlying transient is not claimed diagnosed. These exploratory trials use brake0.10, five-second
-stop deadline, continuous stop0.5s. No TM, autopilot, velocity forcing or teleport.
+underlying transient is not claimed diagnosed. No TM, autopilot, velocity forcing or teleport.
+
+Exploratory stopping (Trial1/2) has a five-second deadline and continuous stop0.5s.
+After the forward goal, taper observed throttle by0.02/s without brake. Retain at
+most a tiny0.001 residual input while speed is above0.10m/s to avoid combining
+the abrupt zero-throttle transition with brake at cruising speed. This is a
+controlled throttle taper, not a claim of pure zero-input coasting. Once measured
+speed is at most0.10m/s, command zero throttle and ramp brake by0.10/s to0.02.
+Confirm stop only with this actual hold brake, speed/vertical speed below0.05m/s,
+|longitudinal acceleration|<=0.5m/s², and no hand brake for a continuous0.5s.
+Control echo must match each requested input. Log taper/brake/hold stages and
+the first actual brake request separately. Whole-profile stop distance/time includes
+the planned throttle taper and is not actuator latency or a braking lower bound.
+These conservative commands are uncalibrated; timeout and all acceleration gates
+remain active. The previous simultaneous throttle-to-zero/brake0.10 caused an
+observed0.5124→0.000191m/s change in one0.05s frame, consistent with-10.24m/s².
+Its two input effects were not separately identified. No acceleration filtering
+or threshold relaxation is used. The strict calibration brake0.70 path is unchanged.
 
 Exploratory reverse monitoring uses signed displacement, not nonnegative path
 length. An API longitudinal value below-0.02m/s starts a bounded observation:

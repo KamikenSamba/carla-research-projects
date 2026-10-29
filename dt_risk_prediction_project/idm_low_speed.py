@@ -18,11 +18,12 @@ from idm_experiment_harness import Harness, EarlyStop, save, settings_dict, raw_
 from idm_brake_route import geometry_sha256, box_vertices
 from idm_scene_audit import weather_scalars
 from idm_reverse_motion import ReverseMotion
+from idm_staged_stop import StagedStop, stopped
 
 
 @dataclass(frozen=True)
 class ExploratoryConfig(BrakeConfig):
-    mode: str = 'exploratory_model3_v6'
+    mode: str = 'exploratory_model3_v7'
     map_name: str = 'Town01_Opt'
     road: int = 8
     lane: int = -1
@@ -42,7 +43,7 @@ class ExploratoryConfig(BrakeConfig):
         if self.trial not in ('trial1','trial2','calibration'):
             raise ValueError('unknown exploratory trial')
         expected=asdict(BrakeConfig())
-        expected.update(mode='exploratory_model3_v6',map_name='Town01_Opt',road=8,spawn_height=.1,
+        expected.update(mode='exploratory_model3_v7',map_name='Town01_Opt',road=8,spawn_height=.1,
             throttle_slew_per_second=.02,
             lane=-1,follower_s=170,end_s=230,planned_route_length=60,
             trial=self.trial,target_speed=.5 if self.trial=='trial1' else 1.,
@@ -264,16 +265,34 @@ class ExploratoryHarness(BrakeHarness):
         else:raise EarlyStop('short_trial_distance_not_reached',self.actor.id)
         self.brake_request=dict(brake_request_frame=self.last_frame,brake_request_time_s=self.t,
             brake_request_progress_m=row['route_progress_m'],brake_request_speed_mps=row['speed_planar_mps'])
-        stopped=[]
+        stop_origin=tuple(row[k] for k in ('x','y','z'))
+        stop_controller=StagedStop(row['throttle'],self.c.dt)
+        stopped_window=[];first_brake=None
         for _ in range(round(self.c.brake_seconds/self.c.dt)):
-            row=self.step('braking',0,.1,row)
-            if self.t-self.brake_request['brake_request_time_s']>=self.c.response_timeout:
-                self.fail_if(row['brake']<.099 or row['throttle']>1e-5,'exploratory_brake_control_timeout')
-                self.fail_if(row['speed_planar_mps']>self.brake_request['brake_request_speed_mps']-.02,
-                    'exploratory_deceleration_timeout')
-            good=(row['speed_planar_mps']<.05 and abs(row['vz'])<.05 and abs(row['a_long_mps2'])<=.5 and row['brake']>=.099)
-            stopped=stopped+[row] if good else []
-            if stopped and (row['frame']-stopped[0]['frame'])*self.c.dt+1e-9>=.5:return
+            command=stop_controller.step(row['speed_planar_mps'])
+            if command['brake']>0 and first_brake is None:
+                first_brake=dict(frame=self.last_frame,sim_time_s=self.t,speed_mps=row['speed_planar_mps'],
+                    route_progress_m=row['route_progress_m'],position=tuple(row[k] for k in ('x','y','z')))
+            self.ledger('staged_stop_command',stage=command['stage'],control=command,
+                first_brake_request=first_brake)
+            row=self.step('stop_confirm' if command['stage']=='stop_hold' else 'braking',
+                command['throttle'],command['brake'],row)
+            self.fail_if(abs(row['throttle']-command['throttle'])>1e-5 or
+                abs(row['brake']-command['brake'])>1e-5,'staged_stop_control_not_reflected')
+            stopped_window=stopped_window+[row] if stopped(row) else []
+            if stopped_window and (row['frame']-stopped_window[0]['frame'])*self.c.dt+1e-9>=.5:
+                save(self.directory/'staged_stop_result.json',dict(continuous_stop_confirmed=True,
+                    stop_request=self.brake_request,first_brake_request=first_brake,
+                    stop_request_position=stop_origin,
+                    stop_onset_frame=stopped_window[0]['frame'],stop_confirmed_frame=row['frame'],
+                    stop_onset_time_s=stopped_window[0]['sim_time_s'],stop_confirmed_time_s=row['sim_time_s'],
+                    stop_distance_from_request_m=sum((stopped_window[0][k]-stop_origin[i])*self.reverse_monitor.road[i]
+                        for i,k in enumerate(('x','y','z'))),
+                    stop_distance_from_first_brake_m=sum((stopped_window[0][k]-first_brake['position'][i])*self.reverse_monitor.road[i]
+                        for i,k in enumerate(('x','y','z'))),
+                    stop_time_from_request_s=stopped_window[0]['sim_time_s']-self.brake_request['brake_request_time_s'],
+                    accepted_braking_lower_bound=None,accepted_response_upper_bound=None))
+                return
         raise EarlyStop('exploratory_stop_timeout',self.actor.id)
 
     def cleanup(self):

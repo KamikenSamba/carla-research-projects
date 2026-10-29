@@ -77,6 +77,17 @@ def verify_completed(directory,result,c):
             if float(r[key])!=observed['control'][key]:raise ValueError('control log mismatch')
     collision=json.loads((directory/'collision_summary.json').read_text(encoding='utf-8'))
     if collision['events']:raise ValueError('observed collision')
+    if c.trial!='calibration':
+        from idm_staged_stop import stopped
+        stop=json.loads((directory/'staged_stop_result.json').read_text(encoding='utf-8'))
+        window=[r for r in rows if int(r['frame'])>=stop['stop_onset_frame']]
+        if (not stop['continuous_stop_confirmed'] or stop['stop_confirmed_frame']!=frames[-1]
+            or (frames[-1]-stop['stop_onset_frame'])*c.dt<.5-1e-9 or not window):
+            raise ValueError('continuous stop not demonstrated')
+        for r in window:
+            observed={k:float(r[k]) for k in ('speed_planar_mps','v_long_mps','vz','a_long_mps2','throttle','brake')}
+            observed['hand_brake']=r['hand_brake']=='True'
+            if not stopped(observed):raise ValueError('stop window contains moving/invalid sample')
     if c.trial=='calibration' and result.get('calibration_valid') is not True:
         raise ValueError('incomplete brake calibration')
 
@@ -111,7 +122,7 @@ def main(argv=None):
         # Do not let a binding destructor attempt RPC after server failure.
         sys.stdout.flush();sys.stderr.flush();os._exit(result['exit_code'])
     return supervise(a,c,entrypoint=Path(__file__),source_files=(
-        'Run_Exploratory_Model3.py','idm_low_speed.py','idm_reverse_motion.py','idm_brake_harness.py','idm_brake_config.py',
+        'Run_Exploratory_Model3.py','idm_low_speed.py','idm_reverse_motion.py','idm_staged_stop.py','idm_brake_harness.py','idm_brake_config.py',
         'idm_brake_metrics.py','idm_experiment_harness.py','idm_harness_host.py'),
         verify_completed=lambda directory,result:verify_completed(directory,result,c))
 

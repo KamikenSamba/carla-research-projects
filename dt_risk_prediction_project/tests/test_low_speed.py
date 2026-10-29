@@ -165,7 +165,7 @@ def test_mock_physics_lifecycle_and_owned_sensor_cleanup(tmp_path,monkeypatch,fa
         a=next(x for x in w.actors if getattr(x,'type_id','').startswith('vehicle.'))
         old=a.speed
         if a.control.brake>0:a.speed=max(0,a.speed-.05)
-        elif a.control.throttle>0:a.speed=min(.5,a.speed+.05)
+        else:a.speed=max(0,a.speed+max(-.05,min(.05,10*a.control.throttle-a.speed)))
         a.acceleration=vector((a.speed-old)/.05,0,0);a.x+=a.speed*.05
         if w.frame==65:
             if fault=='collision':sensor.callback(NS(frame=w.frame,normal_impulse=vector(1,0,0),other_actor=w.external))
