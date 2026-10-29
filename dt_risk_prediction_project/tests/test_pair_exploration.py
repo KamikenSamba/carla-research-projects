@@ -58,8 +58,8 @@ def test_single_policy_and_distance_budget_reject_before_native_rpc(tmp_path,mon
         entry.main(['--config',str(config),'--execute'])
 
 
-def pair_fixture(tmp_path, gap=20.):
-    h=PairHarness.__new__(PairHarness);h.c=ResearchConfig(trial='following');h.directory=tmp_path
+def pair_fixture(tmp_path, gap=20., klass=PairHarness, target_speed=1.):
+    h=klass.__new__(klass);h.c=ResearchConfig(trial='following');h.directory=tmp_path
     h.rows=[];h.pair_rows=[];h.pair_frames=0;h.last_frame=100;h.t=0.;h.collisions=[]
     h.slots={}
     for i,role in enumerate(('leader','follower')):
@@ -79,7 +79,7 @@ def pair_fixture(tmp_path, gap=20.):
         events.append(('tick',));h.last_frame+=1
         for role,cmd in commands.items():
             old=speeds[role]
-            speeds[role]=(min(1.,old+.05) if cmd['phase']=='launch' else
+            speeds[role]=(min(target_speed,old+.05) if cmd['phase']=='launch' else
                           max(0.,old-.05) if cmd['phase']=='braking' else 0.)
             accel[role]=(speeds[role]-old)/.05;positions[role]+=speeds[role]*.05
     h.tick=tick
