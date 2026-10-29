@@ -80,7 +80,7 @@ class GuardedWorld:
 
 class BoundedV2Actuator:
     """Transparent experimental scaling/slew; original V2 requests are kept intact."""
-    def __init__(self,c):self.c=c;self.throttle=0.;self.brake=0.
+    def __init__(self,c):self.c=c;self.throttle=0.;self.brake=0.;self.last_diagnostics=None
     def step(self,request,speed,reason):
         if reason:raise EarlyStop('v2_fallback:'+reason)
         values=[request.throttle,request.brake,request.steer,speed]
@@ -88,9 +88,16 @@ class BoundedV2Actuator:
         if request.brake>0 and speed>.1:raise EarlyStop('v2_brake_transition_not_qualified')
         desired=min(self.c.throttle_cap,max(0.,request.throttle*.10))
         slew=self.c.throttle_slew_per_second*self.c.dt
+        previous_throttle,previous_brake=self.throttle,self.brake
         self.throttle+=max(-slew,min(slew,desired-self.throttle))
         self.brake=min(.02,max(0.,request.brake*.10),self.brake+.10*self.c.dt)
         if request.brake>0:self.throttle=0.
+        self.last_diagnostics=dict(positive_scale=.10,throttle_cap=self.c.throttle_cap,
+            throttle_scaled=request.throttle*.10,throttle_after_cap=desired,
+            previous_throttle=previous_throttle,throttle_step_limit=slew,
+            throttle_slew_limited=abs(desired-previous_throttle)>slew,
+            previous_brake=previous_brake,brake_scaled=request.brake*.10,brake_cap=.02,
+            brake_step_limit=.10*self.c.dt,final_throttle=self.throttle,final_brake=self.brake)
         return self.throttle,self.brake,max(-self.c.steer_cap,min(self.c.steer_cap,request.steer))
 
 
@@ -138,6 +145,7 @@ class V2SingleHarness(ExploratoryHarness):
             csv.DictWriter(f,risk_event_fieldnames()).writeheader()
         with (self.directory/'v2_validation.csv').open('x',encoding='utf-8',newline='') as f:
             csv.DictWriter(f,V2_FIELDS).writeheader()
+        (self.directory/'v2_control_diagnostics.jsonl').open('x',encoding='utf-8').close()
 
     def log_idm(self,requests,observed):
         new_events=len(self.near_events)
@@ -151,6 +159,18 @@ class V2SingleHarness(ExploratoryHarness):
                 csv.DictWriter(f,risk_event_fieldnames()).writerow(to_row(event))
         for request in requests:
             logical=request['logical_actor_id'];r=observed[logical];p=self.parameters[logical]
+            diagnostic=dict(schema_version=1,provenance='recorded_during_control',
+                logical_actor_id=logical,actor_id=r['actor_id'],
+                state_frame=r['command_based_on_frame'],command_frame=r['command_based_on_frame'],
+                response_frame=r['frame'],state_time_s=request['simulation_time'],
+                response_time_s=r['sim_time_s'],
+                controller=self.fleet.controllers[logical].last_diagnostics,
+                actuator=self.actuators[logical].last_diagnostics,
+                observed_control={k:r[k] for k in ('throttle','brake','steer')},
+                api_longitudinal_acceleration_mps2=r['a_long_mps2'],
+                vector_fd_longitudinal_acceleration_mps2=r['a_fd_long_mps2'])
+            with (self.directory/'v2_control_diagnostics.jsonl').open('a',encoding='utf-8') as f:
+                f.write(json.dumps(diagnostic,allow_nan=False)+'\n');f.flush()
             row=dict(observation_frame=r['frame'],command_based_on_frame=r['command_based_on_frame'],
                 observation_time_s=r['sim_time_s'],logical_actor_id=logical,actor_id=r['actor_id'],
                 **{k:r[k] for k in ('x','y','z','speed_planar_mps','a_long_mps2','a_fd_long_mps2')},

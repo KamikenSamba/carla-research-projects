@@ -44,12 +44,14 @@ class VehicleController:
         self.speed_pid = PID(config.speed_kp, config.speed_ki, config.speed_kd, dt, 3.0)
         self.steering_pid = PID(config.steering_kp, config.steering_ki, config.steering_kd, dt, 1.0)
         self.acceleration = 0.0
+        self.last_diagnostics = None
 
     def command(self, speed, acceleration, steering_error, emergency=False):
         p = self.parameters
         speed = finite(speed, "speed", 0.0)
         acceleration = finite(acceleration, "acceleration")
         steering_error = finite(steering_error, "steering_error")
+        requested_acceleration = acceleration
         acceleration = max(-p.max_decel_mps2, min(p.max_accel_mps2, acceleration))
         if emergency:
             self.acceleration = -p.max_decel_mps2
@@ -59,12 +61,25 @@ class VehicleController:
             self.acceleration = alpha * acceleration + (1 - alpha) * self.acceleration
         target = max(0.0, speed + self.acceleration * self.dt)
         feed_forward = self.acceleration / (p.max_accel_mps2 if self.acceleration >= 0 else p.max_decel_mps2)
-        effort = self.speed_pid.step(target - speed) + feed_forward
+        error = target - speed
+        previous_error = self.speed_pid.previous
+        pid_output = self.speed_pid.step(error)
+        effort = pid_output + feed_forward
         throttle, brake = min(1.0, max(0.0, effort)), min(1.0, max(0.0, -effort))
         if emergency:
             throttle, brake = 0.0, 1.0
         steer = max(-self.config.maximum_steer,
                     min(self.config.maximum_steer, self.steering_pid.step(steering_error)))
+        # Observability only: keep the existing command tuple and legacy CSV unchanged.
+        self.last_diagnostics = dict(requested_acceleration_mps2=requested_acceleration,
+            clamped_acceleration_mps2=acceleration, filtered_acceleration_mps2=self.acceleration,
+            speed_mps=speed, target_speed_mps=target, speed_error_mps=error,
+            pid_p=self.speed_pid.kp * error, pid_i=self.speed_pid.ki * self.speed_pid.integral,
+            pid_d=self.speed_pid.kd * (0.0 if previous_error is None else
+                                      (error - previous_error) / self.dt),
+            pid_integral=self.speed_pid.integral, pid_output=pid_output,
+            feed_forward=feed_forward, effort_before_clamp=effort,
+            throttle_after_clamp=throttle, brake_after_clamp=brake, emergency=bool(emergency))
         return target, throttle, brake, steer
 
 

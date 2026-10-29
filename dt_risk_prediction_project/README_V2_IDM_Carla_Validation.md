@@ -1,5 +1,8 @@
 # 既存V2 IDMFleetControllerの実CARLA検証
 
+指令と実測加速度の定義、frame対応、入力制限、サーバ不要の集計と追加診断sidecarは
+[IDM忠実度評価](README_IDM_Fidelity.md)を参照。指令追従の検証と、走行経路が機能したことを区別する。
+
 Issue #40。PR #39の安全なtick・観測・cleanup・監視機構を継承する。
 研究対象は既知の車両別IDMパラメータによる走行・DT予測であり、手動PIの完成や
 単車データからのT推定を目的としない。IDM式・leader検出・PID計算を作り直さない。
