@@ -9,7 +9,7 @@ import sys
 
 from idm_exploratory_following import ResearchConfig, StabilityHarness, ready
 from idm_staged_stop import stopped
-from idm_pair_exploration import PairHarness, single_admission
+from idm_pair_exploration import PairHarness, single_admission, pair_budget
 from Run_Exploratory_Model3 import native_identity, same_identity, session_valid, IdentityGate
 from idm_harness_host import listener_pids
 from Run_IDM_Following_Experiment import supervise
@@ -95,9 +95,13 @@ def main(argv=None):
         result=json.loads((source/'result.json').read_text())
         stability=json.loads((source/'stability_result.json').read_text())
         stop=json.loads((source/'separated_stop_result.json').read_text()) if (source/'separated_stop_result.json').exists() else {}
-        if not single_admission(result,stability,stop):raise ValueError('completed stable single and stop evidence required')
+        if (result.get('config_sha256')!=ResearchConfig().fingerprint or
+            not single_admission(result,stability,stop)):
+            raise ValueError('completed stable single and stop evidence required')
         verify_completed(source,result,ResearchConfig())
         stop_m=stop['stop_distance_m']
+        if not pair_budget(stop_m,(c.front_extent_limit,c.front_extent_limit))['admissible']:
+            raise ValueError('pair distance budget inadmissible before RPC')
     session=payload['session'];session_valid(session,a.server_pid,a.port)
     if not same_identity(native_identity(a.server_pid),session['identity']):raise ValueError('identity mismatch')
     if a.worker:

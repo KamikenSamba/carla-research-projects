@@ -41,6 +41,23 @@ def test_pair_execute_rejects_failed_single_before_native_or_rpc(tmp_path,monkey
         entry.main(['--config',str(config),'--execute'])
 
 
+@pytest.mark.parametrize('foreign_policy',[False,True])
+def test_single_policy_and_distance_budget_reject_before_native_rpc(tmp_path,monkeypatch,foreign_policy):
+    from dataclasses import asdict
+    run=tmp_path/'single';run.mkdir()
+    result=dict(status='completed',supervised=True,worker_exit_code=0,collision_events=0,
+                cleanup=dict(complete=True),config_sha256=('foreign' if foreign_policy else ResearchConfig().fingerprint))
+    (run/'result.json').write_text(json.dumps(result))
+    (run/'stability_result.json').write_text(json.dumps(dict(continuous_ready_s=2.)))
+    (run/'separated_stop_result.json').write_text(json.dumps(dict(continuous_stop_s=.5,physical_bounds=None,stop_distance_m=5.)))
+    c=ResearchConfig(trial='following');config=tmp_path/'config.json'
+    config.write_text(json.dumps(dict(trial='following',scenario=asdict(c),single_run=str(run))))
+    monkeypatch.setattr(entry,'verify_completed',lambda *a:None)
+    monkeypatch.setattr(entry,'native_identity',lambda *_:pytest.fail('native/RPC path reached'))
+    with pytest.raises(ValueError,match='completed stable single|budget inadmissible'):
+        entry.main(['--config',str(config),'--execute'])
+
+
 def pair_fixture(tmp_path, gap=20.):
     h=PairHarness.__new__(PairHarness);h.c=ResearchConfig(trial='following');h.directory=tmp_path
     h.rows=[];h.pair_rows=[];h.pair_frames=0;h.last_frame=100;h.t=0.;h.collisions=[]
