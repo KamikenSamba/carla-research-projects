@@ -107,7 +107,7 @@ def test_overlap_is_not_misrepresented_as_physical_collision(tmp_path,overlap,bl
         with pytest.raises(EarlyStop):h.initial_clearance(tf)
 
 
-@pytest.mark.parametrize('fault',[None,'collision','rpc','external_actor'])
+@pytest.mark.parametrize('fault',[None,'collision','rpc','external_actor','neutral_init'])
 def test_mock_physics_lifecycle_and_owned_sensor_cleanup(tmp_path,monkeypatch,fault):
     from test_idm_harness import World,Waypoint,Gate
     from test_idm_context import Transform,vector
@@ -133,7 +133,11 @@ def test_mock_physics_lifecycle_and_owned_sensor_cleanup(tmp_path,monkeypatch,fa
     def spawn(bp,tf):
         a=original_spawn(bp,tf);a.acceleration=vector()
         a.control=NS(throttle=0,brake=0,steer=0,hand_brake=False,reverse=False,manual_gear_shift=False,gear=1)
-        a.apply_control=lambda ctl:setattr(a,'control',NS(**vars(ctl),gear=1))
+        def apply(ctl):
+            values={'gear':1}|vars(ctl)
+            if fault=='neutral_init':values['gear']=0
+            a.control=NS(**values)
+        a.apply_control=apply
         a.get_acceleration=lambda:a.acceleration
         a.get_physics_control=lambda:NS(mass=1800,center_of_mass=vector(),wheels=[
             NS(radius=30,tire_friction=1,max_brake_torque=1000) for _ in range(4)])
@@ -152,7 +156,7 @@ def test_mock_physics_lifecycle_and_owned_sensor_cleanup(tmp_path,monkeypatch,fa
         a=next(x for x in w.actors if getattr(x,'type_id','').startswith('vehicle.'))
         old=a.speed
         if a.control.brake>0:a.speed=max(0,a.speed-.05)
-        elif w.frame>40:a.speed=min(.5,a.speed+.05)
+        elif a.control.throttle>0:a.speed=min(.5,a.speed+.05)
         a.acceleration=vector((a.speed-old)/.05,0,0);a.x+=a.speed*.05
         if w.frame==65:
             if fault=='collision':sensor.callback(NS(frame=w.frame,normal_impulse=vector(1,0,0),other_actor=w.external))
@@ -176,7 +180,8 @@ def test_mock_physics_lifecycle_and_owned_sensor_cleanup(tmp_path,monkeypatch,fa
         if fault=='external_actor':assert any(a.id==999 for a in w.actors)
         if fault is None:
             assert result['distance_m']>=3 and result['maximum_speed_mps']<=.7
-            assert [r['frame'] for r in h.rows]==list(range(1,len(h.rows)+1))
+            assert [r['frame'] for r in h.rows]==list(range(h.rows[0]['frame'],h.rows[0]['frame']+len(h.rows)))
+            assert (tmp_path/'drive_gear_initialization.json').exists()
             entry.verify_completed(tmp_path,result,h.c)
             with pytest.raises(ValueError):entry.verify_completed(tmp_path,dict(result,motion_samples=1),h.c)
     assert result['route_audit'] is None and result['physical_bounds'] is None

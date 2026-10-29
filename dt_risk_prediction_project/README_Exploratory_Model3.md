@@ -1,4 +1,4 @@
-# Model 3 exploratory low-speed protocol v3
+# Model 3 exploratory low-speed protocol v4
 
 This protocol does not certify or replace the strict Town01 scene audit. The
 Pole/Sidewalks results remain BLOCKED; route_audit and physical_bounds stay null.
@@ -11,6 +11,11 @@ az=-9.8m/s² and vz=-2.45m/s before first ground contact. Lower initial placemen
 retains the |vz|2m/s gate; it does not change or teleport an existing actor.
 Recorded actual wheel center/radius and road projections justify this clearance.
 Initialization frames are excluded from controlled driving distance and calibration.
+Select first gear once under zero throttle and brake0.10, observe it for one
+initialization frame, then return to automatic gears. This responds to observed
+gear0 with throttle0.10 and no longitudinal motion. Initialization is separately
+logged; all subsequent measured frames retain the original automatic-gear gate.
+Maximum measured frames exclude this one initialization frame.
 Before spawning: exact native server identity/ports and OS resources, no observed
 other clients, no vehicle/walker/sensor/controller actors, map/XML identity,
 local waypoint continuity, five ground projections and twelve initial-volume

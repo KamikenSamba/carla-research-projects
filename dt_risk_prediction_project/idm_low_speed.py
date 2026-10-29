@@ -14,14 +14,14 @@ import time
 from idm_brake_config import BrakeConfig, finite
 from idm_brake_harness import BrakeHarness, physics_record
 from idm_brake_metrics import FIELDS, analyze
-from idm_experiment_harness import Harness, EarlyStop, save, settings_dict
+from idm_experiment_harness import Harness, EarlyStop, save, settings_dict, raw_actor_observation
 from idm_brake_route import geometry_sha256, box_vertices
 from idm_scene_audit import weather_scalars
 
 
 @dataclass(frozen=True)
 class ExploratoryConfig(BrakeConfig):
-    mode: str = 'exploratory_model3_v3'
+    mode: str = 'exploratory_model3_v4'
     map_name: str = 'Town01_Opt'
     road: int = 8
     lane: int = -1
@@ -40,7 +40,7 @@ class ExploratoryConfig(BrakeConfig):
         if self.trial not in ('trial1','trial2','calibration'):
             raise ValueError('unknown exploratory trial')
         expected=asdict(BrakeConfig())
-        expected.update(mode='exploratory_model3_v3',map_name='Town01_Opt',road=8,spawn_height=.1,
+        expected.update(mode='exploratory_model3_v4',map_name='Town01_Opt',road=8,spawn_height=.1,
             lane=-1,follower_s=170,end_s=230,planned_route_length=60,
             trial=self.trial,target_speed=.5 if self.trial=='trial1' else 1.,
             speed_limit=.7 if self.trial=='trial1' else 1.2,
@@ -151,6 +151,7 @@ class ExploratoryHarness(BrakeHarness):
         self.sensor=self.command('spawn_collision_sensor',spawn_sensor)
         self.command('listen_collision',self.sensor.listen,self.collision)
         self.collision_gate()
+        self.initialize_drive_gear()
         save(self.directory/'environment.json',dict(versions=versions,map=self.map.name,
             initial_actor_ids=sorted(self.initial_ids),owned_actor_id=self.actor.id,collision_sensor_id=self.sensor.id,
             original_settings=settings_dict(self.original),applied_settings=self.expected_settings,
@@ -158,6 +159,26 @@ class ExploratoryHarness(BrakeHarness):
             initialization='bounded_manual_PI',autopilot_registration='not_requested',tm_created=False,
             physical_bounds=None,route_audit=None,strict_scene_audit='BLOCKED',exclusive_control_basis=
             'operator research session attestation; no observed other dynamic actors/clients; frame and actor interleaving gates'))
+
+    def initialize_drive_gear(self):
+        # CARLA DefaultMovementComponent sets target gear only on reverse transition
+        # or manual selection. Low throttle can otherwise remain in neutral.
+        control=self.api.VehicleControl(throttle=0.,brake=.1,steer=0.,hand_brake=False,
+            reverse=False,manual_gear_shift=True,gear=1)
+        self.command('initial_drive_gear_select',self.actor.apply_control,control)
+        self.t+=self.c.dt;self.tick();time.sleep(.02);self.collision_gate()
+        tf=self.call(self.actor.get_transform);v=self.call(self.actor.get_velocity)
+        observed=self.call(self.actor.get_control);a=self.call(self.actor.get_acceleration)
+        raw=raw_actor_observation(self.actor,'vehicle',tf,v,observed,a,self.last_frame,self.t)
+        save(self.directory/'drive_gear_initialization.json',dict(observation=raw,
+            excluded_from_braking_and_estimation=True,requested_gear=1,one_time_selection=True))
+        self.fail_if(observed.gear!=1 or not observed.manual_gear_shift or observed.throttle>1e-5
+            or observed.brake<.099,'initial_drive_gear_not_applied')
+        self.fail_if(math.hypot(v.x,v.y)>.05 or abs(v.z)>2 or abs(tf.rotation.pitch)>5 or abs(tf.rotation.roll)>5,
+            'initial_drive_gear_motion_or_pose')
+        automatic=self.api.VehicleControl(throttle=0.,brake=0.,steer=0.,hand_brake=False,
+            reverse=False,manual_gear_shift=False,gear=1)
+        self.command('initial_drive_gear_auto_handoff',self.actor.apply_control,automatic)
 
     def initial_clearance(self,start):
         # Local rays establish only sampled initial clearance, not whole-scene safety.
@@ -196,6 +217,7 @@ class ExploratoryHarness(BrakeHarness):
         time.sleep(.02) # allow asynchronous event delivery; absence is not collision proof
         self.collision_gate()
         self.fail_if(row['z']<-.1 or row['z']>1 or abs(row['vz'])>2,'abnormal_contact_or_vertical_motion')
+        self.fail_if(row['phase']=='launch' and (row['gear'] is None or row['gear']<1),'drive_gear_not_engaged')
         return row
 
     def capture(self):
