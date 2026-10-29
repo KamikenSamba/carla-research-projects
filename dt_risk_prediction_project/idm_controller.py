@@ -69,14 +69,17 @@ class VehicleController:
 
 
 class IDMFleetController:
-    def __init__(self, world, logical_to_actor, parameters, dt, config, logger):
+    def __init__(self, world, logical_to_actor, parameters, dt, config, logger, *,
+                 control_sink=None, disable_autopilot=True):
         self.world, self.actors, self.logger = world, logical_to_actor, logger
         self.map, self.config = world.get_map(), config
         self.controllers = {logical: VehicleController(parameters[logical], dt, config)
                             for logical in logical_to_actor}
         self.last_reason = {}
-        for actor in logical_to_actor.values():
-            actor.set_autopilot(False)
+        self.control_sink = control_sink
+        if disable_autopilot:
+            for actor in logical_to_actor.values():
+                actor.set_autopilot(False)
 
     def step(self, simulation_time):
         carla = import_carla()
@@ -128,7 +131,11 @@ class IDMFleetController:
             if gap is not None and gap <= 0:
                 reason = "overlapping_leader"
             target, throttle, brake, steer = controller.command(speed, acceleration, steering_error, bool(reason))
-            actor.apply_control(carla.VehicleControl(throttle=throttle, brake=brake, steer=steer))
+            command = carla.VehicleControl(throttle=throttle, brake=brake, steer=steer)
+            if self.control_sink is None:
+                actor.apply_control(command)
+            else:
+                self.control_sink(logical, actor, command, reason)
             if reason and self.last_reason.get(logical) != reason:
                 self.logger.warning("IDM fallback actor=%s simulation_time=%.3f reason=%s", actor.id, simulation_time, reason)
             self.last_reason[logical] = reason
