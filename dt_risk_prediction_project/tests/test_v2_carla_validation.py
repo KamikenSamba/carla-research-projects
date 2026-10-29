@@ -122,6 +122,10 @@ def test_single_synthetic_full_capture_v2_replay_stop_cleanup(tmp_path,monkeypat
     entry.verify_completed(tmp_path,result,h.c)
     snapshot=read_snapshot(tmp_path/'initial_snapshot.json')
     assert snapshot[0]['desired_speed_mps']==.5 and snapshot[0]['desired_time_headway_s']==1
+    diagnostics=[json.loads(line) for line in (tmp_path/'v2_control_diagnostics.jsonl').read_text().splitlines()]
+    assert len(diagnostics)==120
+    assert all(d['response_frame']==d['command_frame']+1==d['state_frame']+1 for d in diagnostics)
+    assert all(d['provenance']=='recorded_during_control' and d['controller'] and d['actuator'] for d in diagnostics)
 
 
 def test_pair_v2_capture_has_no_manual_pi_no_duplicate_commands_and_real_core_replay(tmp_path,monkeypatch):
@@ -157,6 +161,10 @@ def test_pair_v2_capture_has_no_manual_pi_no_duplicate_commands_and_real_core_re
     rows=list(csv.DictReader((tmp_path/'v2_validation.csv').open()))
     assert len(rows)==240 and {r['logical_actor_id'] for r in rows}=={'leader','follower'}
     assert all(r['v2_leader_id']=='1' for r in rows if r['logical_actor_id']=='follower')
+    diagnostics=[json.loads(line) for line in (tmp_path/'v2_control_diagnostics.jsonl').read_text().splitlines()]
+    assert len(diagnostics)==240
+    assert {(str(d['actor_id']),str(d['response_frame'])) for d in diagnostics}=={
+        (r['actor_id'],r['observation_frame']) for r in rows}
 
 
 @pytest.mark.parametrize('failure',[False,True,'velocity'])
