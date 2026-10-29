@@ -17,11 +17,12 @@ from idm_brake_metrics import FIELDS, analyze
 from idm_experiment_harness import Harness, EarlyStop, save, settings_dict, raw_actor_observation
 from idm_brake_route import geometry_sha256, box_vertices
 from idm_scene_audit import weather_scalars
+from idm_reverse_motion import ReverseMotion
 
 
 @dataclass(frozen=True)
 class ExploratoryConfig(BrakeConfig):
-    mode: str = 'exploratory_model3_v5'
+    mode: str = 'exploratory_model3_v6'
     map_name: str = 'Town01_Opt'
     road: int = 8
     lane: int = -1
@@ -41,7 +42,7 @@ class ExploratoryConfig(BrakeConfig):
         if self.trial not in ('trial1','trial2','calibration'):
             raise ValueError('unknown exploratory trial')
         expected=asdict(BrakeConfig())
-        expected.update(mode='exploratory_model3_v5',map_name='Town01_Opt',road=8,spawn_height=.1,
+        expected.update(mode='exploratory_model3_v6',map_name='Town01_Opt',road=8,spawn_height=.1,
             throttle_slew_per_second=.02,
             lane=-1,follower_s=170,end_s=230,planned_route_length=60,
             trial=self.trial,target_speed=.5 if self.trial=='trial1' else 1.,
@@ -111,6 +112,8 @@ class ExploratoryHarness(BrakeHarness):
             (w.road_id,w.section_id,w.lane_id)!=(8,0,-1) for w in self.route),'local_route_invalid')
         self.path=[(w.transform.location.x,w.transform.location.y,w.transform.location.z) for w in self.route]
         self.route_length=sum(math.dist(p,q) for p,q in zip(self.path,self.path[1:]))
+        direction=tuple((self.path[-1][i]-self.path[0][i])/self.route_length for i in range(3))
+        self.reverse_monitor=ReverseMotion(direction,c.dt)
         self.fail_if(abs(self.route_length-60)>.02,'local_route_length')
         self.fail_if(any(abs((w.transform.rotation.yaw-self.route[0].transform.rotation.yaw+180)%360-180)>.5
             or abs(w.transform.location.z-self.route[0].transform.location.z)>.02 for w in self.route),
@@ -213,6 +216,25 @@ class ExploratoryHarness(BrakeHarness):
                 self.fail_if(any(h.label!=getattr(self.api.CityObjectLabel,'NONE',None) for h in hits),
                     'initial_clearance_tagged_obstacle')
 
+    def reverse_motion_gate(self,r):
+        snap=self.frame_unchanged();state=snap.find(self.actor.id)
+        self.fail_if(state is None,'actor_snapshot_missing',self.actor.id)
+        tf=state.get_transform();v=state.get_velocity();a=state.get_acceleration()
+        snapshot=dict(frame=int(snap.frame),world_time_s=float(snap.timestamp.elapsed_seconds),
+            position={k:getattr(tf.location,k) for k in ('x','y','z')},
+            velocity={k:getattr(v,k) for k in ('x','y','z')},
+            acceleration={k:getattr(a,k) for k in ('x','y','z')})
+        record=self.reverse_monitor.update(r)
+        record.update(actor_snapshot=snapshot,command_based_on_frame=r['command_based_on_frame'],
+            control_read_at_frame=r['control_read_at_frame'],throttle=r['throttle'],brake=r['brake'],gear=r['gear'])
+        with (self.directory/'longitudinal_diagnostics.jsonl').open('a',encoding='utf-8') as f:
+            f.write(json.dumps(record,allow_nan=False)+'\n');f.flush()
+        self.fail_if(any(abs(snapshot['position'][k]-r[k])>1e-6 or
+            abs(snapshot['velocity'][k]-r['v'+k])>1e-6 or
+            abs(snapshot['acceleration'][k]-r['a'+k])>1e-5 for k in ('x','y','z')),
+            'actor_snapshot_api_state_mismatch',self.actor.id)
+        self.fail_if(record['reason'] is not None,record['reason'],self.actor.id)
+
     def step(self,*args,**kwargs):
         self.collision_gate();self.fail_if(len(self.rows)>=self.c.maximum_frames,'frame_limit')
         row=super().step(*args,**kwargs)
@@ -232,9 +254,13 @@ class ExploratoryHarness(BrakeHarness):
         self.fail_if(not all(local_pose_ok(r) for r in self.rows[-10:]),'initial_vehicle_not_stable')
         save(self.directory/'initial_vehicle_state.json',dict(actor_id=self.actor.id,
             settled_rows=self.rows[-10:],wheel_contact_directly_measured=False,friction_measured=False))
+        drive_origin=tuple(row[k] for k in ('x','y','z'))
+        save(self.directory/'drive_target_reference.json',dict(frame=row['frame'],position=drive_origin,
+            road_direction=self.reverse_monitor.road,required_signed_displacement_m=self.c.drive_distance))
         for _ in range(round(self.c.drive_seconds/self.c.dt)):
             row=self.step('launch',self.controller.step(row['speed_planar_mps']),0,row)
-            if row['route_progress_m']>=self.c.drive_distance:break
+            displacement=sum((row[k]-drive_origin[i])*self.reverse_monitor.road[i] for i,k in enumerate(('x','y','z')))
+            if displacement>=self.c.drive_distance:break
         else:raise EarlyStop('short_trial_distance_not_reached',self.actor.id)
         self.brake_request=dict(brake_request_frame=self.last_frame,brake_request_time_s=self.t,
             brake_request_progress_m=row['route_progress_m'],brake_request_speed_mps=row['speed_planar_mps'])

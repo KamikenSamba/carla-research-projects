@@ -111,7 +111,7 @@ def main(argv=None):
         # Do not let a binding destructor attempt RPC after server failure.
         sys.stdout.flush();sys.stderr.flush();os._exit(result['exit_code'])
     return supervise(a,c,entrypoint=Path(__file__),source_files=(
-        'Run_Exploratory_Model3.py','idm_low_speed.py','idm_brake_harness.py','idm_brake_config.py',
+        'Run_Exploratory_Model3.py','idm_low_speed.py','idm_reverse_motion.py','idm_brake_harness.py','idm_brake_config.py',
         'idm_brake_metrics.py','idm_experiment_harness.py','idm_harness_host.py'),
         verify_completed=lambda directory,result:verify_completed(directory,result,c))
 

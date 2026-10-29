@@ -1,4 +1,4 @@
-# Model 3 exploratory low-speed protocol v5
+# Model 3 exploratory low-speed protocol v6
 
 This protocol does not certify or replace the strict Town01 scene audit. The
 Pole/Sidewalks results remain BLOCKED; route_audit and physical_bounds stay null.
@@ -33,6 +33,24 @@ change responds to the first launch frame reporting longitudinal velocity-0.0252
 at throttle0.005. Backward-motion and acceleration gates are unchanged; the
 underlying transient is not claimed diagnosed. These exploratory trials use brake0.10, five-second
 stop deadline, continuous stop0.5s. No TM, autopilot, velocity forcing or teleport.
+
+Exploratory reverse monitoring uses signed displacement, not nonnegative path
+length. An API longitudinal value below-0.02m/s starts a bounded observation:
+three consecutive samples (0.15s) abort even if position progresses forward.
+API velocity below-0.10m/s aborts immediately. A signed backward displacement
+over1mm in one frame, or retreat over2mm from the greatest signed progress, aborts
+independently of API sign. These are provisional operational values, not CARLA
+physical guarantees. At the observed world coordinates float position resolution
+is tens of micrometers; the displacement checks reject meaningful reverse motion
+without summing quantization noise as travel. No speed/acceleration/collision/lane
+or endpoint limit is relaxed. Legacy brake calibration keeps its original gate.
+
+Each measured frame additionally records the same-frame ActorSnapshot transform,
+velocity and acceleration, road/body directions, signed position differences,
+actual dt, control/command frame and reverse-monitor decision. Mismatching snapshot
+and actor state, missing snapshot or noncontiguous time/frame aborts. Reading the
+snapshot does not generate another tick. A single saved negative endpoint velocity
+and positive interval-average velocity do not establish the cause of the transient.
 
 Calibration: only after Trial2 succeeds. Reuse the existing calibration capture,
 two-second continuous readiness, brake0.70, response0.3s, continuous stop0.5s,

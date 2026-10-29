@@ -194,7 +194,7 @@ class BrakeHarness(Harness):
         self.fail_if(abs(r['a_long_mps2'])>c.acceleration_peak,'acceleration_peak',who)
         self.fail_if(self.accel_count>=2,'acceleration_sustained',who)
         self.fail_if(max(r['speed_planar_mps'],abs(r['v_long_mps']))>c.speed_limit,'speed_envelope',who)
-        self.fail_if(r['v_long_mps']<-.02,'backward_motion',who)
+        self.reverse_motion_gate(r)
         self.fail_if((wp.road_id,wp.section_id,wp.lane_id)!=(c.road,c.section,c.lane) or wp.is_junction,'lane_or_junction_departure',who)
         self.fail_if(r['route_lateral_m']>c.lateral_limit or abs(r['heading_error_deg'])>c.heading_limit or
                      abs((r['roll']+180)%360-180)>5 or abs((r['pitch']+180)%360-180)>5,'route_deviation',who)
@@ -209,6 +209,9 @@ class BrakeHarness(Harness):
                      'observed_control_envelope',who)
         self.fail_if(r['phase'] in ('settle','launch') and r['brake']>1e-5,'unexpected_brake_before_test',who)
         self.fail_if(settings_dict(self.call(self.world.get_settings))!=self.expected_settings,'world_settings_changed')
+
+    def reverse_motion_gate(self,r):
+        self.fail_if(r['v_long_mps']<-.02,'backward_motion',self.actor.id)
 
     def step(self,phase,throttle,brake,row=None):
         steer=0 if row is None else max(-self.c.steer_cap,min(self.c.steer_cap,

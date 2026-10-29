@@ -118,6 +118,14 @@ def test_mock_physics_lifecycle_and_owned_sensor_cleanup(tmp_path,monkeypatch,fa
     monkeypatch.setattr(module.hashlib,'sha256',lambda _:NS(hexdigest=lambda:
         '97a7f6ac67812567e5c8ee0599cd823b23f80f30f3f97c502212e38b72e2b709'))
     w=World();gate=Gate()
+    def snapshot():
+        def find(actor_id):
+            actor=next((a for a in w.actors if a.id==actor_id),None)
+            if actor is None:return None
+            return NS(get_transform=actor.get_transform,get_velocity=actor.get_velocity,
+                get_acceleration=actor.get_acceleration)
+        return NS(frame=w.frame,timestamp=NS(elapsed_seconds=w.time),find=find)
+    w.get_snapshot=snapshot
     class WP(Waypoint):
         road_id,section_id,lane_id,lane_width,lane_type=8,0,-1,4.,'Driving'
         def __init__(self,x):self.x=x;self.s=170+x
