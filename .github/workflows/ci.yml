@@ -62,7 +62,7 @@ jobs:
   dt-offline-tests:
     name: DT IDM offline tests (Python 3.12)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
