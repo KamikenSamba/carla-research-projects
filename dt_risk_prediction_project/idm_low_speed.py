@@ -85,10 +85,19 @@ class ExploratoryHarness(BrakeHarness):
         record=dict(frame=event.frame,other_actor_id=event.other_actor.id,
             other_type=event.other_actor.type_id,received_wall_ns=time.time_ns(),
             normal_impulse=dict(x=impulse.x,y=impulse.y,z=impulse.z))
+        observer=getattr(self,'gt_observer',None)
         with self.collision_lock:
-            self.collisions.append(record)
-            with (self.directory/'collision_events.jsonl').open('a',encoding='utf-8') as f:
-                f.write(json.dumps(record,allow_nan=False)+'\n');f.flush()
+            self.collisions.append(record)  # Preserve the safety flag even if observation fails.
+            if observer:
+                try:record.update(observer.collision_metadata(event,self.actor.id))
+                except BaseException as error:
+                    observer.callback_failure(error);record['gt_observation_error']=repr(error)
+            try:
+                with (self.directory/'collision_events.jsonl').open('a',encoding='utf-8') as f:
+                    f.write(json.dumps(record,allow_nan=False)+'\n');f.flush()
+            except BaseException as error:
+                if observer:observer.callback_failure(error)
+                raise
 
     def collision_gate(self):
         with self.collision_lock:self.fail_if(bool(self.collisions),'collision_event',self.actor.id)
@@ -106,6 +115,8 @@ class ExploratoryHarness(BrakeHarness):
         self.fail_if(any(a.type_id.startswith(('vehicle.','walker.','sensor.','controller.')) for a in actors),
                      'existing_dynamic_actor_or_sensor')
         xml=self.call(self.map.to_opendrive)
+        observer=getattr(self,'gt_observer',None)
+        if observer:observer.opendrive(xml,actors,self.last_frame,self.last_time)
         self.fail_if(hashlib.sha256(xml.encode()).hexdigest()!=
             '97a7f6ac67812567e5c8ee0599cd823b23f80f30f3f97c502212e38b72e2b709','opendrive_mismatch')
         self.route=[self.call(self.map.get_waypoint_xodr,c.road,c.lane,float(s)) for s in c.route_s_samples]
@@ -146,7 +157,9 @@ class ExploratoryHarness(BrakeHarness):
         self.fail_if(box.extent.x+abs(box.location.x)>c.front_extent_limit or box.extent.y+abs(box.location.y)>1.25,
                      'actual_bbox_outside_initial_clearance',self.actor.id)
         self.fail_if(min(box.extent.x,box.extent.y,box.extent.z)<=0,'unknown_actual_bbox')
-        physics=physics_record(self.call(self.actor.get_physics_control));save(self.directory/'vehicle_physics.json',physics)
+        physics_control=self.call(self.actor.get_physics_control)
+        physics=physics_record(physics_control);save(self.directory/'vehicle_physics.json',physics)
+        if observer:observer.physics(self.actor.id,physics_control,'vehicle_physics.json',self.last_frame,self.last_time)
         self.fail_if(not finite(physics['mass']) or physics['mass']<=0 or len(physics['wheels'])!=4 or
             any(not finite(w[k]) or w[k]<=0 for w in physics['wheels'] for k in
                 ('radius','max_brake_torque','tire_friction')),'physics_unknown')
@@ -156,6 +169,7 @@ class ExploratoryHarness(BrakeHarness):
             self.owned={'collision':s,**self.owned};return s
         self.sensor=self.command('spawn_collision_sensor',spawn_sensor)
         self.command('listen_collision',self.sensor.listen,self.collision)
+        if observer:observer.sensor_started(self.sensor.id,self.actor.id,self.last_frame)
         self.collision_gate()
         self.initialize_drive_gear()
         save(self.directory/'environment.json',dict(versions=versions,map=self.map.name,
@@ -302,6 +316,8 @@ class ExploratoryHarness(BrakeHarness):
         if self.sensor is not None and not self.gate.poisoned:
             try:
                 self.frame_unchanged();self.call(self.sensor.stop)
+                observer=getattr(self,'gt_observer',None)
+                if observer:observer.sensor_stopped(self.sensor.id)
             except BaseException as exc:self.result['sensor_stop_error']=repr(exc)
         if self.result.get('status')!='completed' and self.owned.get('vehicle') is not None and not self.gate.poisoned:
             try:

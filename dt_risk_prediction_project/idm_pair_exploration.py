@@ -53,10 +53,19 @@ class PairHarness(ExploratoryHarness):
         record=dict(frame=event.frame, actor_id=owner, other_actor_id=event.other_actor.id,
             other_type=event.other_actor.type_id, received_wall_ns=time.time_ns(),
             normal_impulse={k:getattr(event.normal_impulse,k) for k in ('x','y','z')})
+        observer=getattr(self,'gt_observer',None)
         with self.collision_lock:
-            self.collisions.append(record)
-            with (self.directory/'collision_events.jsonl').open('a',encoding='utf-8') as f:
-                f.write(json.dumps(record,allow_nan=False)+'\n');f.flush()
+            self.collisions.append(record)  # Preserve the safety flag even if observation fails.
+            if observer:
+                try:record.update(observer.collision_metadata(event,owner))
+                except BaseException as error:
+                    observer.callback_failure(error);record['gt_observation_error']=repr(error)
+            try:
+                with (self.directory/'collision_events.jsonl').open('a',encoding='utf-8') as f:
+                    f.write(json.dumps(record,allow_nan=False)+'\n');f.flush()
+            except BaseException as error:
+                if observer:observer.callback_failure(error)
+                raise
 
     def collision_gate(self):
         super().collision_gate()
@@ -83,12 +92,15 @@ class PairHarness(ExploratoryHarness):
             return actor
         self.actor=self.command('spawn_pair_leader',spawn)
         self.fail_if(self.actor is None,'leader_spawn_failed')
-        physics=physics_record(self.call(self.actor.get_physics_control))
+        physics_control=self.call(self.actor.get_physics_control)
+        physics=physics_record(physics_control)
         self.fail_if(not isinstance(physics['mass'],(int,float)) or not math.isfinite(physics['mass'])
             or physics['mass']<=0 or len(physics['wheels'])!=4 or any(
             not isinstance(w[k],(int,float)) or not math.isfinite(w[k]) or w[k]<=0
             for w in physics['wheels'] for k in ('radius','max_brake_torque','tire_friction')),'leader_physics_unknown')
         save(self.directory/'leader_physics.json',physics)
+        observer=getattr(self,'gt_observer',None)
+        if observer:observer.physics(self.actor.id,physics_control,'leader_physics.json',self.last_frame,self.last_time)
         sensor_bp=self.call(self.world.get_blueprint_library).find('sensor.other.collision')
         leader=self.actor
         def spawn_sensor():
@@ -97,6 +109,7 @@ class PairHarness(ExploratoryHarness):
             return sensor
         self.sensor=self.command('spawn_leader_collision_sensor',spawn_sensor)
         self.command('listen_leader_collision',self.sensor.listen,lambda e:self.record_collision(e,leader.id))
+        if observer:observer.sensor_started(self.sensor.id,leader.id,self.last_frame)
         self.initialize_drive_gear()
         self.slots['leader']=slot(self.actor,self.sensor)
         lengths=[abs(s['actor'].bounding_box.location.x)+s['actor'].bounding_box.extent.x for s in self.slots.values()]
@@ -200,7 +213,10 @@ class PairHarness(ExploratoryHarness):
             return super().cleanup()
         if not self.gate.poisoned:
             for s in self.slots.values():
-                try:self.frame_unchanged();self.call(s['sensor'].stop)
+                try:
+                    self.frame_unchanged();self.call(s['sensor'].stop)
+                    observer=getattr(self,'gt_observer',None)
+                    if observer:observer.sensor_stopped(s['sensor'].id)
                 except BaseException as exc:self.result['sensor_stop_error']=repr(exc)
         Harness.cleanup(self,manage_tm=False)
         self.result.update(collision_events=len(self.collisions),motion_samples=len(self.rows),
