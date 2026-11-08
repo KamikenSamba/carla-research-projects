@@ -11,6 +11,7 @@ from idm_brake_metrics import FIELDS
 from idm_experiment_harness import Harness, EarlyStop, save
 from idm_reverse_motion import ReverseMotion
 from idm_staged_stop import StagedStop, stopped
+from idm_abort_state import bounded_stop
 
 PAIR_FIELDS = ['logical_id', *FIELDS, 'leader_id', 'gap_m', 'relative_speed_mps']
 
@@ -43,6 +44,7 @@ class PairHarness(ExploratoryHarness):
         super().__init__(*args, **kwargs)
         self.single_stop_m = single_stop_m
         self.slots = {}
+        self.abort_state().pair=True
         self.pair_rows = []
         self.pair_frames = 0
 
@@ -50,22 +52,26 @@ class PairHarness(ExploratoryHarness):
         self.record_collision(event, getattr(self, 'follower_actor', self.actor).id)
 
     def record_collision(self, event, owner):
+        ExploratoryHarness.abort_state(self).request('collision_event',received_ns=time.monotonic_ns())
         record=dict(frame=event.frame, actor_id=owner, other_actor_id=event.other_actor.id,
             other_type=event.other_actor.type_id, received_wall_ns=time.time_ns(),
             normal_impulse={k:getattr(event.normal_impulse,k) for k in ('x','y','z')})
         observer=getattr(self,'gt_observer',None)
         with self.collision_lock:
             self.collisions.append(record)  # Preserve the safety flag even if observation fails.
-            if observer:
-                try:record.update(observer.collision_metadata(event,owner))
-                except BaseException as error:
-                    observer.callback_failure(error);record['gt_observation_error']=repr(error)
-            try:
-                with (self.directory/'collision_events.jsonl').open('a',encoding='utf-8') as f:
-                    f.write(json.dumps(record,allow_nan=False)+'\n');f.flush()
+        metadata={}
+        if observer:
+            try:metadata=observer.collision_metadata(event,owner)
             except BaseException as error:
-                if observer:observer.callback_failure(error)
-                raise
+                observer.callback_failure(error);metadata={'gt_observation_error':repr(error)}
+        with self.collision_lock:
+            record.update(metadata);payload=dict(record)
+        try:
+            with (self.directory/'collision_events.jsonl').open('a',encoding='utf-8') as f:
+                f.write(json.dumps(payload,allow_nan=False)+'\n');f.flush()
+        except BaseException as error:
+            if observer:observer.callback_failure(error)
+            raise
 
     def collision_gate(self):
         super().collision_gate()
@@ -132,6 +138,7 @@ class PairHarness(ExploratoryHarness):
         commands={} if issued_commands is None else issued_commands
         if issued_commands is None:
             for role in ('leader','follower'):
+                self.check_abort()
                 self.select(role);r=last.get(role)
                 steer=0. if r is None else max(-self.c.steer_cap,min(self.c.steer_cap,
                     -self.c.heading_kp*r['heading_error_deg']-self.c.lateral_kp*r['signed_lateral_m']))
@@ -139,7 +146,7 @@ class PairHarness(ExploratoryHarness):
         else:
             self.fail_if(set(commands)!={'leader','follower'} or any(
                 cmd['based_on_frame']!=self.last_frame for cmd in commands.values()),'issued_pair_command_frame_mismatch')
-        self.t+=self.c.dt;self.tick();self.pair_frames+=1
+        self.check_abort();self.t+=self.c.dt;self.tick();self.pair_frames+=1
         observed={}
         for role in ('leader','follower'):
             self.select(role)
@@ -211,6 +218,36 @@ class PairHarness(ExploratoryHarness):
     def cleanup(self):
         if not self.slots:
             return super().cleanup()
+        state=self.abort_state()
+        aborting=self.result.get('status')!='completed'
+        if aborting:
+            # A vehicle may already be owned when preparation fails before its
+            # slot/sensor is complete. Account for it without issuing control.
+            for name,actor in self.owned.items():
+                if name in ('vehicle','follower','leader'):state.register(actor.id)
+            for role,slot in self.slots.items():state.register(slot['actor'].id,role)
+            state.request(self.result.get('reason') or self.result.get('status') or 'abort')
+            # Only qualified low-speed, echoed controls; one request per actor.
+            # There is no abort ticking loop and no .70 pair-brake bypass.
+            for role,slot in self.slots.items():
+                actor=slot['actor']
+                try:
+                    if self.gate.poisoned:
+                        state.unverified(actor.id,'rpc_poisoned');continue
+                    if actor not in self.owned.values() or set(self.slots)!={'leader','follower'}:
+                        state.unverified(actor.id,'incomplete_owned_slots');continue
+                    self.frame_unchanged()
+                    row=next((r for r in reversed(self.rows) if r['actor_id']==actor.id),None)
+                    control,reason=bounded_stop(row,state.last_success.get(actor.id),self.last_frame)
+                    if reason:
+                        state.unverified(actor.id,reason);continue
+                    self.select(role)
+                    permit=state.reserve_stop(actor.id,control)
+                    self.issue('abort',**control,_abort_permit=permit)
+                except BaseException as exc:
+                    state.unverified(actor.id,repr(exc))
+                    self.result.setdefault('abort_control_errors',{})[str(actor.id)]=repr(exc)
+            self._persist_abort()
         if not self.gate.poisoned:
             for s in self.slots.values():
                 try:
@@ -221,5 +258,9 @@ class PairHarness(ExploratoryHarness):
         Harness.cleanup(self,manage_tm=False)
         self.result.update(collision_events=len(self.collisions),motion_samples=len(self.rows),
             pair_frames=self.pair_frames,route_audit=None,physical_bounds=None)
+        if state.requested:
+            if self.result.get('status')=='completed':
+                self.result.update(status='early_stop',reason=state.reason,exit_code=2)
+            state.cleanup_result(self.result.get('cleanup',{}));self._persist_abort()
         save(self.directory/'collision_summary.json',dict(events=self.collisions,absence_is_not_geometry_proof=True))
         if self.collisions:self.result.update(status='early_stop',reason='collision_event',exit_code=2)

@@ -103,11 +103,14 @@ class BrakeHarness(Harness):
             autopilot_registration='not_requested',physics_bounds=None,initialization='bounded_manual_PI'))
         self.active_actor=None
 
-    def issue(self,phase,throttle,brake,steer):
+    def _apply_control_rpc(self,control,values,abort_permit=None):
+        return self.call(self.actor.apply_control,control)
+
+    def issue(self,phase,throttle,brake,steer,*,_abort_permit=None):
         values=dict(throttle=throttle,brake=brake,steer=steer,hand_brake=False,reverse=False,manual_gear_shift=False)
         seq=self.ledger('manual_control',outcome='requested',actor_id=self.actor.id,phase=phase,control=values)
         control=self.api.VehicleControl(**values)
-        try:returned=self.call(self.actor.apply_control,control)
+        try:returned=self._apply_control_rpc(control,values,_abort_permit)
         except BaseException as exc:
             self.ledger('manual_control',outcome='failed',request_sequence=seq,error=str(exc));raise
         self.ledger('manual_control',outcome='call_returned',request_sequence=seq,

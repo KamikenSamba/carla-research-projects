@@ -19,6 +19,7 @@ from idm_brake_route import geometry_sha256, box_vertices
 from idm_scene_audit import weather_scalars
 from idm_reverse_motion import ReverseMotion
 from idm_staged_stop import StagedStop, stopped
+from idm_abort_state import AbortState, AbortRejected
 
 
 @dataclass(frozen=True)
@@ -77,10 +78,50 @@ class ExploratoryHarness(BrakeHarness):
         super().__init__(*args,**kwargs)
         self.stage='exploratory_low_speed';self.result['stage']=self.stage
         self.collisions=[];self.collision_lock=threading.Lock();self.sensor=None
+        self._abort_state=AbortState()
         self.result.update(strict_scene_audit='BLOCKED',route_audit=None,physical_bounds=None,
             exploratory_protocol=True,trial=self.c.trial)
 
+    def abort_state(self):
+        # Some legacy mock fixtures construct the harness with __new__.
+        if not hasattr(self,'_abort_state'):self._abort_state=AbortState(pair=hasattr(self,'slots'))
+        return self._abort_state
+
+    def check_abort(self):
+        try:self.abort_state().check()
+        except AbortRejected as exc:raise EarlyStop(self.abort_state().reason or str(exc)) from exc
+
+    def _persist_abort(self):
+        state=self.abort_state()
+        if not state.requested:return
+        self.result['abort']=state.snapshot()
+        try:save(self.directory/'abort_result.json',self.result['abort'])
+        except BaseException as exc:self.result.setdefault('abort_io_errors',[]).append(repr(exc))
+
+    def issue(self,phase,throttle,brake,steer,*,_abort_permit=None):
+        if _abort_permit is None:self.check_abort()
+        return super().issue(phase,throttle,brake,steer,_abort_permit=_abort_permit)
+
+    def _apply_control_rpc(self,control,values,abort_permit=None):
+        state=self.abort_state();actor=self.actor;frame=self.last_frame
+        state.register(actor.id)
+        def guarded():
+            # HealthGate/IdentityGate has completed. No I/O between admission and
+            # calling the API; callback publication uses only the short state lock.
+            try:ticket=state.admit(actor.id,frame,values,abort_permit)
+            except AbortRejected as exc:raise EarlyStop(state.reason or str(exc)) from exc
+            state.rpc_started(ticket)
+            try:returned=actor.apply_control(control)
+            except BaseException as exc:
+                state.finish(ticket,error=repr(exc));raise
+            state.finish(ticket,returned=returned)
+            return returned
+        try:return self.call(guarded)
+        finally:
+            if state.requested:self._persist_abort()
+
     def collision(self,event):
+        ExploratoryHarness.abort_state(self).request('collision_event',received_ns=time.monotonic_ns())
         impulse=event.normal_impulse
         record=dict(frame=event.frame,other_actor_id=event.other_actor.id,
             other_type=event.other_actor.type_id,received_wall_ns=time.time_ns(),
@@ -88,18 +129,22 @@ class ExploratoryHarness(BrakeHarness):
         observer=getattr(self,'gt_observer',None)
         with self.collision_lock:
             self.collisions.append(record)  # Preserve the safety flag even if observation fails.
-            if observer:
-                try:record.update(observer.collision_metadata(event,self.actor.id))
-                except BaseException as error:
-                    observer.callback_failure(error);record['gt_observation_error']=repr(error)
-            try:
-                with (self.directory/'collision_events.jsonl').open('a',encoding='utf-8') as f:
-                    f.write(json.dumps(record,allow_nan=False)+'\n');f.flush()
+        metadata={}
+        if observer:
+            try:metadata=observer.collision_metadata(event,self.actor.id)
             except BaseException as error:
-                if observer:observer.callback_failure(error)
-                raise
+                observer.callback_failure(error);metadata={'gt_observation_error':repr(error)}
+        with self.collision_lock:
+            record.update(metadata);payload=dict(record)
+        try:
+            with (self.directory/'collision_events.jsonl').open('a',encoding='utf-8') as f:
+                f.write(json.dumps(payload,allow_nan=False)+'\n');f.flush()
+        except BaseException as error:
+            if observer:observer.callback_failure(error)
+            raise
 
     def collision_gate(self):
+        self.check_abort()
         with self.collision_lock:self.fail_if(bool(self.collisions),'collision_event',self.actor.id)
         self.fail_if(self.sensor is None or not self.sensor.is_listening,'collision_sensor_not_listening')
 
@@ -313,15 +358,23 @@ class ExploratoryHarness(BrakeHarness):
         raise EarlyStop('exploratory_stop_timeout',self.actor.id)
 
     def cleanup(self):
+        state=self.abort_state()
+        aborting=self.result.get('status')!='completed'
+        if aborting:
+            for actor in self.owned.values():
+                if actor is self.owned.get('vehicle'):state.register(actor.id,'solo')
+            state.request(self.result.get('reason') or self.result.get('status') or 'abort')
         if self.sensor is not None and not self.gate.poisoned:
             try:
                 self.frame_unchanged();self.call(self.sensor.stop)
                 observer=getattr(self,'gt_observer',None)
                 if observer:observer.sensor_stopped(self.sensor.id)
             except BaseException as exc:self.result['sensor_stop_error']=repr(exc)
-        if self.result.get('status')!='completed' and self.owned.get('vehicle') is not None and not self.gate.poisoned:
+        if aborting and self.owned.get('vehicle') is not None and not self.gate.poisoned:
             try:
-                self.frame_unchanged();self.issue('abort',0,self.c.brake,0)
+                self.frame_unchanged()
+                permit=state.reserve_stop(self.actor.id,dict(throttle=0,brake=self.c.brake,steer=0),legacy=True)
+                self.issue('abort',0,self.c.brake,0,_abort_permit=permit)
             except BaseException as exc:self.result['abort_control_error']=repr(exc)
         if self.c.trial=='calibration':super().cleanup()
         else:Harness.cleanup(self,manage_tm=False)
@@ -334,4 +387,8 @@ class ExploratoryHarness(BrakeHarness):
             maximum_speed_mps=max((r['speed_planar_mps'] for r in self.rows),default=None))
         if events:
             self.result.update(status='early_stop',reason='collision_event',exit_code=2,calibration_valid=False)
+        if state.requested:
+            if self.result.get('status')=='completed':
+                self.result.update(status='early_stop',reason=state.reason,exit_code=2,calibration_valid=False)
+            state.cleanup_result(self.result.get('cleanup',{}));self._persist_abort()
         save(self.directory/'collision_summary.json',dict(events=events,absence_is_not_collision_geometry_proof=True))

@@ -1,5 +1,56 @@
 # 既存V2 IDMFleetControllerの実CARLA検証
 
+## bounded abortの指令遮断と証跡
+
+安全是正のオフライン実装は実走許可ではない。`route_audit=null`、
+`physical_bounds=null`、実CARLA試験BLOCKEDを維持する。
+
+collision callbackはevent属性の解釈・GT observer・ファイルI/Oより先に
+不可逆なabort latchを設定する。fleetループ前、車両別actuator更新前、
+HealthGate/IdentityGate確認後の最終制御RPC受付前で遮断する。
+通常のphase名を`abort`へ変えても受付を迂回できない。
+
+latch設定と指令受付は同じ短いLockで直列化する。RPC・I/O・GT処理中は
+このLockもcollision記録用Lockも保持しない。各harnessは最初の制御threadに
+束縛し、受付済みcontrol RPCを最大1件に制限する。この保証は当該harnessの
+制御APIに限り、別clientや別harnessの不在を証明しない。
+callback到着、latch設定、指令受付、API呼出し開始・完了をmonotonic時刻と
+sequenceで別記録する。受付後〜呼出し開始前や実行中の割込みでは、既受付の
+1件を取消できない。2台への送信は非atomicで、1台目のみ受付となり得る。
+続く2台目の通常指令やdrive tickで帳尻を合わせない。
+
+異常時は`result.abort`と`abort_result.json`に車両別の事実を保存する。
+`ABORT_REQUESTED`、`DRIVE_COMMANDS_BLOCKED`、`STOP_COMMAND_ATTEMPTED`、
+`STOP_COMMAND_ACKNOWLEDGED`、`STOP_OBSERVED`、`STOP_UNVERIFIED`、
+`CLEANUP_ATTEMPTED`、`CLEANUP_COMPLETED`は独立した単調な事実である。
+API返却のACKは`ack_kind=api_call_returned`であり、server内部受領・control echo・
+物理停止とは異なる。actor削除や旧`safe_early_stop`も停止の証明にしない。
+
+2台abortでは、通信/identity/frame/owned slotsが有効で、直近の同frame記録と
+最終成功指令が整合し、速度<=0.10m/s、gear/姿勢/道路/入力が適格な場合だけ、
+各車に最大1回の限定要求を行う。入力はthrottle=0、直近適格steerを保持し、
+`brake=min(0.02, previous_brake + 0.10*elapsed)`。
+`elapsed=min(0.05,max(0,(current_frame-last_successful_control_frame)*0.05))`
+なので、同frameのbrake増分は0で、他車のslew予算を流用しない。
+brakeが0のまま、速度が高い、状態/制御履歴が未知、直近指令が未echo、
+brakeが既存cap外、slotが不完全等の場合は新規制御をskipする。
+高速側のneutralizeや強制制動を追加していない。
+
+単車abortの既存brake=0.70、入力順序、追加tick=0は維持するが、2台へは移植しない。
+通信例外でpoisonした後は、他車停止・sensor停止・削除・設定復元を含む追加RPCを
+禁止する。停止未確認やcleanup未完遂を成功扱いせず、自動再接続/再試行しない。
+
+追加abort tick/観測loopは0。したがって物理停止を観測できなければ必ず
+`STOP_UNVERIFIED`を残し、既存cleanup結果は独立して記録する。
+CARLA非依存`StopWindow`は外から与えられたpost-request両車同frame記録だけを
+評価する。既存`stopped()`条件、control echo、dt=0.05、11連続sample/0.5秒が
+必要で、重複/欠測frameを補間しない。100sample以内に窓が成立しなければtimeout。
+このreducerはtickを生成せず、実worldの停止確認を有効化しない。
+永続disk障害・native終了・通信断では最終証跡や復元の完遂も保証できない。
+
+`tests/test_bounded_abort.py`のT01〜T36は合成データとmockの検証であり、
+実車両の停止性能・路面安全性・実session排他性の実証ではない。
+
 指令と実測加速度の定義、frame対応、入力制限、サーバ不要の集計と追加診断sidecarは
 [IDM忠実度評価](README_IDM_Fidelity.md)を参照。指令追従の検証と、走行経路が機能したことを区別する。
 

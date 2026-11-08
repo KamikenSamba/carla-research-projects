@@ -116,11 +116,13 @@ class V2SingleHarness(GTObservationMixin, ExploratoryHarness):
         self.last_observed=last;self.sent={};self.actuators={k:BoundedV2Actuator(self.c) for k in actors}
         self.logical_actors=actors
         def sink(logical,actor,request,reason):
+            self.check_abort()
             self.frame_unchanged()
             self.ledger('v2_requested_control',logical_actor_id=logical,
                 requested=dict(throttle=request.throttle,brake=request.brake,steer=request.steer),
                 fallback_reason=reason,measured_speed_mps=last[logical]['speed_planar_mps'])
             if hasattr(self,'select') and logical in getattr(self,'slots',{}):self.select(logical)
+            self.check_abort()
             throttle,brake,steer=self.actuators[logical].step(request,last[logical]['speed_planar_mps'],reason)
             self.sent[logical]=self.issue('launch',throttle,brake,steer)
         control_config=ControlConfig(maximum_steer=self.c.steer_cap,leader_search_m=30.)
@@ -199,7 +201,7 @@ class V2SingleHarness(GTObservationMixin, ExploratoryHarness):
         self.fail_if(not all(local_pose_ok(r) for r in self.rows[-10:]),'initial_vehicle_not_stable')
         origin=row['route_progress_m'];last={'solo':row};self.initialize_fleet({'solo':self.actor},last)
         for _ in range(round(self.c.drive_seconds/self.c.dt)):
-            self.collision_gate();self.frame_unchanged()
+            self.check_abort();self.collision_gate();self.frame_unchanged()
             requests=self.fleet.step(self.t);self.frame_unchanged()
             self.t+=self.c.dt;self.tick();row=self.observe('launch',self.sent['solo'])
             self.fail_if(row['z']<-.1 or row['z']>1 or abs(row['vz'])>2,'abnormal_contact_or_vertical_motion')
@@ -273,7 +275,8 @@ class V2FleetHarness(GTObservationMixin, PairHarness):
         origins={k:r['route_progress_m'] for k,r in last.items()}
         self.initialize_fleet({k:s['actor'] for k,s in self.slots.items()},last)
         for _ in range(120):
-            self.frame_unchanged();requests=self.fleet.step(self.t);self.frame_unchanged()
+            self.check_abort();self.collision_gate();self.frame_unchanged()
+            requests=self.fleet.step(self.t);self.frame_unchanged();self.check_abort()
             observed=self.pair_step('launch',None,last,issued_commands=dict(self.sent))
             for k,r in observed.items():
                 self.fail_if(r['route_progress_m']-origins[k]>3.,'v2_fleet_distance_limit',r['actor_id'])
