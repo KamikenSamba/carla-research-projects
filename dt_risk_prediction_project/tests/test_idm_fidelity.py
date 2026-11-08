@@ -178,3 +178,19 @@ def test_cli_outputs_new_only_and_refuses_source_tree_and_overwrites(tmp_path):
     assert summary['total_rows']==90 and summary['route_audit'] is None and summary['physical_bounds'] is None
     with pytest.raises(ValueError,match='output'):analyze(root,out)
     with pytest.raises(ValueError,match='output'):analyze(root,root/'new')
+
+
+@pytest.mark.parametrize("payload", [
+    b"a,b\r\n1,\r\n",
+    '\ufeffa,b\r\n"line1\r\nline2","\u65e5\u672c\u8a9e"\r\n'.encode("utf-8"),
+    b"a,b\n1,2\n", b"",
+])
+def test_csv_verified_bytes_matches_path_reader(tmp_path,payload):
+    from idm_fidelity import csv_rows,csv_rows_from_bytes
+    path=tmp_path/"rows.csv";path.write_bytes(payload)
+    assert csv_rows_from_bytes(payload)==csv_rows(path)
+
+
+def test_csv_bytes_invalid_encoding_is_not_replaced():
+    from idm_fidelity import csv_rows_from_bytes
+    with pytest.raises(UnicodeDecodeError):csv_rows_from_bytes(b"a\n\xff")

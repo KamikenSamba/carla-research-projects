@@ -178,4 +178,183 @@ raise SystemExit(main(sys.argv[1:]))
         self.assertEqual(result.returncode,0,result.stderr)
         record=json.loads(out.read_text());self.assertEqual(record['status'],'CONTRACT_VALID_PENDING_APPROVAL')
         self.assertFalse(record['independent_forecast_accuracy_enabled'])
+
+    def test_each_artifact_read_once_including_repeated_resolved_reference(self):
+        original=Path.read_bytes;counts={}
+        # Use one physical environment artifact for both sides.
+        self.m['prediction']['artifacts']['environment']=dict(self.m['source']['artifacts']['environment'])
+        def capture(path):
+            key=path.resolve();counts[key]=counts.get(key,0)+1
+            return original(path)
+        with patch.object(Path,'read_bytes',capture):self.check()
+        self.assertTrue(counts);self.assertTrue(all(n==1 for n in counts.values()),counts)
+
+    def test_repeated_path_conflicting_expected_hash_rejected(self):
+        self.m['prediction']['artifacts']['environment']=dict(self.m['source']['artifacts']['environment'],sha256='f'*64)
+        self.check('HASH_MISMATCH')
+
+    def test_bytes_changed_during_acquisition_rejected(self):
+        original=Path.read_bytes;target=(self.root/'source/snapshot.json').resolve()
+        def changing(path):
+            data=original(path)
+            return data+b' ' if path.resolve()==target else data
+        with patch.object(Path,'read_bytes',changing):self.check('HASH_MISMATCH')
+
+    def test_replacement_after_hash_never_parsed(self):
+        import dt_gt_manifest as module
+        original=module.hashlib.sha256;target=self.root/'source/snapshot.json';before=target.read_bytes()
+        def hashing(data):
+            digest=original(data)
+            if data==before:target.write_text('{}',encoding='utf-8')
+            return digest
+        with patch.object(module.hashlib,'sha256',hashing):
+            result=self.check()
+        self.assertEqual(result['input_hashes'][str(target.resolve())],original(before).hexdigest())
+        self.assertEqual(target.read_text(),'{}')
+
+    def test_cached_reference_survives_changed_original_content(self):
+        import dt_gt_manifest as module
+        self.m['prediction']['artifacts']['environment']=dict(self.m['source']['artifacts']['environment'])
+        target=self.root/self.m['source']['artifacts']['environment']['path'];before=target.read_bytes()
+        original=module.hashlib.sha256
+        def hashing(data):
+            digest=original(data)
+            if data==before:target.write_text('{}',encoding='utf-8')
+            return digest
+        with patch.object(module.hashlib,'sha256',hashing):self.check()
+        self.assertEqual(target.read_text(),'{}')
+
+    def test_verified_artifact_invalid_encoding(self):
+        ref=self.m['registry'];path=self.root/ref['path'];path.write_bytes(b'\xff')
+        ref['sha256']=hashlib.sha256(path.read_bytes()).hexdigest()
+        self.check('utf-8')
+
+    def test_verified_artifact_duplicate_key(self):
+        ref=self.m['registry'];path=self.root/ref['path'];path.write_text('{"sources":[],"sources":[]}',encoding='utf-8')
+        ref['sha256']=hashlib.sha256(path.read_bytes()).hexdigest();self.check('DUPLICATE_JSON_KEY')
+
+    def test_declarations_do_not_certify_authenticity_or_internal_restoration(self):
+        for side in ('source','prediction'):
+            for ctl in self.m[side]['control'].values():ctl['state_capture']='recorded'
+        self.m['prediction']['initialization']['internal_physics_state']='recorded'
+        result=self.check()
+        self.assertFalse(result['risk_detection_performance_enabled'])
+        self.assertEqual(result['initial_state_assessment'],'NOT_EVALUATED_PENDING_POLICY')
+        self.assertIsNone(result['route_audit']);self.assertIsNone(result['physical_bounds'])
+
+    def assert_output_rejected(self,out):
+        from Validate_DT_GroundTruth import main
+        with self.assertRaises(SystemExit):main(['--manifest',str(self.path),'--output',str(out)])
+
+    def test_cli_repository_output_from_external_cwd(self):
+        out=Path(__file__).resolve().parents[1]/'must_not_create_gt_output.json'
+        cwd=Path.cwd()
+        try:
+            os.chdir(self.temp.name);self.assert_output_rejected(out)
+        finally:os.chdir(cwd)
+        self.assertFalse(out.exists())
+
+    def test_cli_other_git_worktree_output(self):
+        for marker_is_directory in (False,True):
+            with self.subTest(directory=marker_is_directory):
+                directory=Path(self.temp.name)/str(marker_is_directory);directory.mkdir()
+                marker=directory/'.git'
+                if marker_is_directory:marker.mkdir()
+                else:marker.write_text('gitdir: elsewhere',encoding='utf-8')
+                out=directory/'new.json';self.assert_output_rejected(out);self.assertFalse(out.exists())
+
+    def test_cli_input_directory_output_rejected(self):
+        out=self.root/'source/new.json';self.assert_output_rejected(out);self.assertFalse(out.exists())
+
+    def test_cli_existing_manifest_artifact_and_hardlink_preserved(self):
+        artifact=self.root/'source/snapshot.json';hardlink=Path(self.temp.name)/'hardlink.json'
+        os.link(artifact,hardlink)
+        for path in (self.path,artifact,hardlink):
+            with self.subTest(path=path):
+                before=path.read_bytes();self.assert_output_rejected(path);self.assertEqual(path.read_bytes(),before)
+
+    def test_cli_relative_path_into_input_rejected(self):
+        cwd=Path.cwd()
+        try:
+            os.chdir(self.temp.name);self.assert_output_rejected(Path('bundle/source/../new.json'))
+        finally:os.chdir(cwd)
+        self.assertFalse((self.root/'new.json').exists())
+
+    def test_cli_symbolic_links_rejected(self):
+        target=Path(self.temp.name)/'external';target.mkdir()
+        link=Path(self.temp.name)/'link'
+        try:link.symlink_to(target,target_is_directory=True)
+        except OSError as error:self.skipTest('symlink creation unavailable: '+str(error))
+        self.assert_output_rejected(link/'new.json');self.assertFalse((target/'new.json').exists())
+        dangling=Path(self.temp.name)/'dangling.json';dangling.symlink_to(target/'absent.json')
+        self.assert_output_rejected(dangling);self.assertFalse((target/'absent.json').exists())
+        # A link then '..' must not be normalized away before inspecting it.
+        self.assert_output_rejected(link/'..'/'new.json')
+
+    @unittest.skipUnless(os.name=='nt','Windows junction test')
+    def test_cli_windows_junction_rejected(self):
+        target=Path(self.temp.name)/'external';target.mkdir();link=Path(self.temp.name)/'junction'
+        completed=subprocess.run(['cmd','/c','mklink','/J',str(link),str(target)],capture_output=True,text=True,timeout=10)
+        self.assertEqual(completed.returncode,0,completed.stderr)
+        try:self.assert_output_rejected(link/'new.json');self.assertFalse((target/'new.json').exists())
+        finally:os.rmdir(link)  # Remove only the junction, never recursively traverse it.
+
+    def test_cli_reparse_link_flag_rejected_without_link_privilege(self):
+        from types import SimpleNamespace
+        real=Path.lstat;out=Path(self.temp.name)/'result.json';out.write_text('keep',encoding='utf-8')
+        def link_stat(path,*args,**kwargs):
+            info=real(path,*args,**kwargs)
+            if path==out:return SimpleNamespace(st_mode=info.st_mode,st_file_attributes=1024)
+            return info
+        with patch.object(Path,'lstat',link_stat):self.assert_output_rejected(out)
+        self.assertEqual(out.read_text(),'keep')
+
+    def test_cli_safe_new_external_output(self):
+        from Validate_DT_GroundTruth import main
+        out=Path(self.temp.name)/'new.json'
+        self.assertEqual(main(['--manifest',str(self.path),'--output',str(out)]),0)
+        self.assertEqual(json.loads(out.read_text())['status'],'CONTRACT_VALID_PENDING_APPROVAL')
+
+    def test_cli_missing_manifest_can_save_invalid(self):
+        from Validate_DT_GroundTruth import main
+        missing=self.root/'missing.json';out=Path(self.temp.name)/'invalid.json'
+        self.assertEqual(main(['--manifest',str(missing),'--output',str(out)]),2)
+        self.assertEqual(json.loads(out.read_text())['status'],'INVALID')
+
+    def test_cli_boundary_rechecked_after_validation(self):
+        import Validate_DT_GroundTruth as cli
+        out=Path(self.temp.name)/'new.json';original=cli.validate
+        def changed(path):
+            result=original(path);out.write_text('created concurrently',encoding='utf-8');return result
+        with patch.object(cli,'validate',changed):self.assert_output_rejected(out)
+        self.assertEqual(out.read_text(),'created concurrently')
+
+    def test_cli_parent_replaced_by_junction_flag_before_write(self):
+        import Validate_DT_GroundTruth as cli
+        from types import SimpleNamespace
+        original=cli.validate;real=Path.lstat;parent=Path(self.temp.name);changed=False
+        def validate_then_replace(path):
+            nonlocal changed
+            result=original(path);changed=True;return result
+        def lstat(path,*args,**kwargs):
+            info=real(path,*args,**kwargs)
+            if changed and path==parent:
+                return SimpleNamespace(st_mode=info.st_mode,st_file_attributes=1024)
+            return info
+        out=parent/'new.json'
+        with patch.object(cli,'validate',validate_then_replace),patch.object(Path,'lstat',lstat):
+            self.assert_output_rejected(out)
+        self.assertFalse(out.exists())
+
+    def test_cli_exclusive_create_catches_final_leaf_race(self):
+        import Validate_DT_GroundTruth as cli
+        original=cli.guarded_output;calls=0;out=Path(self.temp.name)/'new.json'
+        def raced(*args):
+            nonlocal calls
+            result=original(*args);calls+=1
+            if calls==2:out.write_text('race winner',encoding='utf-8')
+            return result
+        with patch.object(cli,'guarded_output',raced):self.assert_output_rejected(out)
+        self.assertEqual(out.read_text(),'race winner')
+
 if __name__=='__main__':unittest.main()

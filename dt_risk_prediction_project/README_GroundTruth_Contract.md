@@ -99,3 +99,29 @@ eventsは原検出定義、対象ID・範囲、event.frame/time/pair/provenance/
 既存V2は従来の再構成再現性で利用できる。TM800行の対応予測不足やRD300件の初期差/一部prefix問題は保持し、新manifestを捏造して評価へ通さない。
 
 v1はcomplete fixed cohort、最大16MiB/file・100000 actor-frame点のオフライン実装。処理量上限はCARLA安全閾値ではない。途中消失・衝突後censor、known schedule、完全な学習履歴認定は別レビュー。収集契約の導入と実CARLA実行許可は別である。
+
+## 検証したbytesと保証の範囲
+
+validatorはartifactの解決後pathごとにbytesを一度取得し、そのbytesのSHA-256を宣言値と照合してからJSON/CSV/Snapshotの解析へ渡す。同じpathの再参照はキャッシュしたbytesを使い、異なる期待hashが指定されれば拒否する。Snapshotの正規化とCSVのBOM・改行処理は既存Path APIと共通であり、既存の呼出し方法は変更しない。
+
+取得中に変化したbytesのhashが宣言と異なればINVALIDとなる。取得後に元ファイルが差し替わっても解析対象は取得済みbytesであり、結果のinput_hashesはその解析対象を指す。これは元ファイルの不変性、取得操作の原子的なディスクsnapshot、検証終了時のディスク内容を保証しない。
+
+|項目|検査対象と限界|
+|---|---|
+|hash一致|解析したbytesと宣言hashの一致。署名・信頼された取得元・実CARLA由来の真正性は証明しない|
+|構造・時刻・ID・因果性|申告されたmanifest/artifact内の整合性。未申告入力や実行時アクセス全体は監査しない|
+|complete_static|wrapper、unknown_fields、ID集合、mass/wheels等の実装済み項目。全静的physics属性の取得済み認定ではない|
+|recorded|内部physics/control状態の申告enum。内部状態payloadの完全性や完全復元の証明ではない|
+|inventory_complete|申告prefix・親hash・最大frame/time等の検査。隠れた入力や全学習履歴の真正性は保証しない|
+|label_contract_complete|宣言されたラベルの構造・coverage・原eventとの整合性。注釈の独立性や正解性の認定ではない|
+|初期状態残差|数値の診断記録のみ。非ゼロでも閾値判定せず、完全一致でも評価を許可しない|
+
+正常結果は引き続き`CONTRACT_VALID_PENDING_APPROVAL`であり、独立予測精度・リスク検出性能・実行許可はすべて無効。`route_audit=null`、`physical_bounds=null`、実CARLA試験BLOCKEDを維持する。これらの限定是正は契約v1の意味や収集器を変更しない。
+
+## CLI出力先
+
+`--output`は既存の外部通常ディレクトリにある新規ファイルを指定する。CLI実体から特定したRepository、`.git` markerを持つ別worktree、入力manifestのディレクトリとその配下への出力は拒否する。指定pathと解決後pathを照合し、symlink・junction・reparse pointを含む出力経路、既存ファイル（hardlink・dangling linkを含む）を拒否する。親ディレクトリを自動作成せず、保存直前に再検査してexclusive createする。危険な出力先では代替ファイルを自動選択しない。
+
+不正JSONや欠損manifestでも、path境界を確定でき、安全な外部新規出力先であればINVALIDの結果を保存できる。入力artifactはmanifestディレクトリ内に限定されているため、その全体を出力禁止範囲とする。
+
+この保護は安定したローカル親ディレクトリを前提とする。保存直前の再検査とexclusive createは、悪意ある並行操作による親ディレクトリの差し替えを無条件に防ぐsandboxではない。より強い保証にはOS固有のdirectory handle/rename制約等の別設計が必要となる。

@@ -23,6 +23,11 @@ def read_snapshot(path: Path) -> list[dict]:
     else:
         with path.open(encoding="utf-8-sig", newline="") as stream:
             rows = list(csv.DictReader(stream))
+    return read_snapshot_rows(rows)
+
+
+def read_snapshot_rows(rows: list[dict]) -> list[dict]:
+    """Normalize already parsed rows using the same rules as the Path API."""
     if not isinstance(rows, list):
         raise ValueError("snapshot must contain an actors list")
     result, seen = [], set()

@@ -71,19 +71,23 @@ def validate(manifest_path):
         policy=ev['initial_policy'];keys(policy,'initial_policy')
         check(policy==dict(status='PROPOSED_UNAPPROVED',thresholds=None,approval_reference=None),'UNSUPPORTED_POLICY_APPROVAL')
         # Reuse existing Snapshot/CSV/frame validators, not evaluator accuracy paths.
-        from idm_snapshot import read_snapshot
-        from idm_fidelity import csv_rows
+        from idm_snapshot import read_snapshot_rows
+        from idm_fidelity import csv_rows_from_bytes
         from idm_v2_reconstruction import physics_settings
         from dt_trajectory_evaluation import _index
+        verified_bytes={}
         def asset(ref):
             keys(ref,'artifact');sha(ref['sha256']);p=Path(text(ref['path']))
             check(not p.is_absolute(),'ARTIFACT_ABSOLUTE_PATH');p=(root/p).resolve()
             check(p.is_relative_to(root) and p.is_file(),'ARTIFACT_PATH')
             check(p.stat().st_size<=16*1024*1024,'ARTIFACT_TOO_LARGE')
-            b=p.read_bytes();h=hashlib.sha256(b).hexdigest();result['input_hashes'][str(p)]=h
-            check(h==ref['sha256'],'HASH_MISMATCH:'+ref['path']);return p
+            if p not in verified_bytes:
+                b=p.read_bytes();check(len(b)<=16*1024*1024,'ARTIFACT_TOO_LARGE')
+                verified_bytes[p]=(b,hashlib.sha256(b).hexdigest())
+            b,h=verified_bytes[p];result['input_hashes'][str(p)]=h
+            check(h==ref['sha256'],'HASH_MISMATCH:'+ref['path']);return b
         def document(ref):
-            obj=load_json(asset(ref).read_text(encoding='utf-8-sig'));finite_tree(obj);return obj
+            obj=load_json(asset(ref).decode('utf-8-sig'));finite_tree(obj);return obj
         source=m['source'];pred=m['prediction'];keys(source,'source');keys(pred,'prediction')
         text(source['run_id']);text(source['protocol']);commit(source['code_commit']);integer(source['seed'])
         text(pred['run_id']);text(pred['method']);commit(pred['code_commit']);integer(pred['seed'])
@@ -127,20 +131,20 @@ def validate(manifest_path):
         state_sets=[];environments=[];physics=[];boxes=[];initial_controls=[];event_contracts=[]
         for label,side in [('source',source),('prediction',pred)]:
             keys(side['artifacts'],label+'_artifacts');ar=side['artifacts'];f0=integer(side['origin']['frame']);t0=num(side['origin']['simulation_time_s'])
-            sp=asset(ar['snapshot']);rawsnap=load_json(sp.read_text(encoding='utf-8-sig'))
+            rawsnap=document(ar['snapshot'])
             for r in rawsnap['actors']:integer(r['carla_frame']);integer(r['source_actor_id'])
-            snap={r['logical_actor_id']:r for r in read_snapshot(sp)}
+            snap={r['logical_actor_id']:r for r in read_snapshot_rows(rawsnap['actors'])}
             check(set(snap)==ids,'SNAPSHOT_LOGICAL_IDS')
             for logical,r in snap.items():
                 check(r['source_actor_id']==side['actor_map'][logical] and r['carla_frame']==f0,'SNAPSHOT_ID_FRAME')
                 check(abs(r['sim_time_s']-t0)<=1e-6,'SNAPSHOT_T0')
                 check(abs(math.hypot(r['vx'],r['vy'],r['vz'])-r['speed_mps'])<=1e-6,'SNAPSHOT_SPEED_DEFINITION')
             state_sets.append(snap)
-            future=csv_rows(asset(ar['future']));index,actors,_=_index(future,dt,f0)
+            future=csv_rows_from_bytes(asset(ar['future']));index,actors,_=_index(future,dt,f0)
             for r in future:num(r['yaw'])
             check(actors==side['actor_map'],'FUTURE_ACTOR_IDS')
             check(set(index)=={(logical,k) for logical in ids for k in range(1,n+1)},'FUTURE_MISSING_OR_EXTRA_FRAMES')
-            clock=csv_rows(asset(ar['clock']));clock_frames=set()
+            clock=csv_rows_from_bytes(asset(ar['clock']));clock_frames=set()
             for clockrow in clock:
                 cf=integer(clockrow['frame']);ct=num(clockrow['simulation_time_s'])
                 check(cf not in clock_frames,'CLOCK_DUPLICATE');clock_frames.add(cf)
@@ -222,7 +226,7 @@ def validate(manifest_path):
             for value in delta.values():num(value)
             result['initial_residuals'][logical]=delta
         check(all(state_sets[0][i]['blueprint_id']==state_sets[1][i]['blueprint_id'] for i in ids),'BLUEPRINT_MISMATCH')
-        prefix=csv_rows(asset(source['artifacts']['prefix']));f0=integer(source['origin']['frame']);t0=num(source['origin']['simulation_time_s']);start=integer(source['prefix_start_frame'])
+        prefix=csv_rows_from_bytes(asset(source['artifacts']['prefix']));f0=integer(source['origin']['frame']);t0=num(source['origin']['simulation_time_s']);start=integer(source['prefix_start_frame'])
         check(start<=f0,'PREFIX_RANGE');seen=set()
         check((f0-start+1)*len(ids)<=100000,'PROTOTYPE_PREFIX_ROW_LIMIT')
         for r in prefix:

@@ -6,6 +6,7 @@ Controller internals replayed from a fresh controller are explicitly labelled.
 """
 from collections import defaultdict
 import csv
+import io
 from dataclasses import asdict
 import hashlib
 import json
@@ -47,6 +48,12 @@ def errors(measured, requested):
     return dict(n=len(e), rmse=math.sqrt(statistics.mean(x*x for x in e)),
                 mae=statistics.mean(abs(x) for x in e), bias=statistics.mean(e),
                 residual_std=statistics.pstdev(e))
+
+
+def csv_rows_from_bytes(data: bytes):
+    """Parse verified UTF-8 CSV bytes; preserve the Path reader's CSV semantics."""
+    with io.StringIO(data.decode('utf-8-sig'), newline='') as stream:
+        return list(csv.DictReader(stream))
 
 
 def csv_rows(path):
