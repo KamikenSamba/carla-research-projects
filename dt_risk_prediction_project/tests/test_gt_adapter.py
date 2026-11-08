@@ -263,3 +263,16 @@ def test_known_source_files_mislabelled_without_flags_are_rejected(runs,tmp_path
     edit(runs/'prediction','gt_run_provenance.json',change)
     result=adapt(runs/'source',runs/'prediction',tmp_path/'out')
     assert result['status']=='INPUT_INCOMPLETE' and expected in result['errors'][0],result
+
+
+def test_declared_input_roles_reuse_already_verified_source_bytes(collected,tmp_path,monkeypatch):
+    original=Path.read_bytes;counts={}
+    def counted(path):
+        key=path.resolve();counts[key]=counts.get(key,0)+1
+        return original(path)
+    monkeypatch.setattr(Path,'read_bytes',counted)
+    result=adapt(collected/'source',collected/'prediction',tmp_path/'out')
+    assert result['status']=='CONTRACT_VALID_PENDING_APPROVAL',result
+    assert counts[(collected/'source/gt_input_view/snapshot.json').resolve()]==1
+    assert counts[(collected/'source/gt_input_view/prefix.csv').resolve()]==1
+    assert all(n==1 for p,n in counts.items() if p.is_relative_to(collected))

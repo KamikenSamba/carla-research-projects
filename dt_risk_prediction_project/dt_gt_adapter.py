@@ -132,14 +132,14 @@ def events(run, origin, end, clock, result):
         raw_events=output,label_status='missing',label_protocol=None,labels=[])
 
 
-def input_policy(source, prediction, source_origin, known_future, known_traits):
+def input_policy(source, prediction, source_origin, known_future, known_traits, captured_bytes):
     """Check declared inputs, never claim a sandbox or complete runtime read audit."""
     parent=prediction['parent']
     check(parent['run_id']==source['run_id'] and parent['origin']=={
         'frame':source_origin['frame'],'simulation_time_s':source_origin['simulation_time_s']},'PARENT_SOURCE_ORIGIN')
     for field,name in [('snapshot_sha256','snapshot.json'),('prefix_sha256','prefix.csv')]:
         check(parent[field]==source_origin['view'][name]['sha256'],'PARENT_FROZEN_VIEW_HASH')
-    verified_inputs={}
+    verified_inputs=dict(captured_bytes);declared_paths=set()
     for provenance in (source,prediction):
         check(provenance.get('inventory_complete') is True,'INPUT_INVENTORY_UNDECLARED')
         for entry in provenance['inputs']:
@@ -156,7 +156,7 @@ def input_policy(source, prediction, source_origin, known_future, known_traits):
             if entry.get('contains_source_future') or entry['sha256'] in known_future:
                 check(entry['role'] in ('evaluation_only','safety_admission'),'FUTURE_MODEL_INPUT')
             # Hash inventory is checked by value against the actual declared file.
-            path=Path(entry['path']).resolve()
+            path=Path(entry['path']).resolve();declared_paths.add(path)
             if path not in verified_inputs:
                 check(path.stat().st_size<=16*1024*1024,'DECLARED_INPUT_TOO_LARGE')
                 data=path.read_bytes();check(len(data)<=16*1024*1024,'DECLARED_INPUT_TOO_LARGE')
@@ -165,7 +165,7 @@ def input_policy(source, prediction, source_origin, known_future, known_traits):
     required={ref['sha256'] for ref in source_origin['view'].values()}
     supplied={entry['sha256'] for entry in prediction['inputs'] if entry['role']=='model_observation'}
     check(supplied==required,'PREDICTION_FROZEN_VIEW_INPUTS_MISSING')
-    return {str(path):digest(data) for path,data in verified_inputs.items()}
+    return {str(path):digest(verified_inputs[path]) for path in declared_paths}
 
 
 def transform_run(run):
@@ -264,7 +264,8 @@ def adapt(source_dir, prediction_dir, output):
              'v2_control_diagnostics.jsonl','pair_raw.jsonl','pair_observations.csv','risk_events.csv','collision_events.jsonl')
              if name in readers[0].inventory}
         known_traits={digest(readers[0].read(name)) for name in ('initial_snapshot.json','resolved_idm_parameters.json')}
-        report['declared_input_hashes']=input_policy(s,p,so,known_future,known_traits)
+        report['declared_input_hashes']=input_policy(s,p,so,known_future,known_traits,
+            {path:data for reader in readers for path,data in reader.cache.items()})
         # This adapter connects the existing replay protocol, not a new predictor.
         check(p['parameter_policy']=='reconstruction_known','ONLY_EXPLICIT_A_RECONSTRUCTION_SUPPORTED')
         def artifact(name,data,csv=False):
