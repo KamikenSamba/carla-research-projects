@@ -219,7 +219,7 @@ class GTObserver:
             'calibration_observations.csv','command_ledger.jsonl','prediction_states.csv','risk_events.csv',
             'v2_validation.csv','v2_control_diagnostics.jsonl','resolved_idm_parameters.json',
             'resolved_control_config.json','vehicle_physics.json','leader_physics.json','collision_events.jsonl',
-            'pair_environment.json','v2_completion.json','config_used.json'}
+            'pair_environment.json','pair_raw.jsonl','pair_observations.csv','v2_completion.json','config_used.json'}
         files=[p for p in self.directory.iterdir() if p.is_file() and
                (p.name in originals or p.name.startswith('gt_') and p.suffix in ('.json','.jsonl','.xodr'))
                and p.name!='gt_artifact_inventory.json']

@@ -34,7 +34,7 @@
 
 metadataには`enabled=true`、`role`、`evidence_kind`、`run_id`、`protocol`、`parameter_policy`、`inputs`、`inventory_complete=true`を明示する。実workerで`synthetic`は拒否する。Sourceは`split=test`、Predictionは親run/origin/固定Snapshot・prefix hashと`model_data`を持つ。実行のために正常値を仮設定してはならない。
 
-`seed`は`{value, status, components, evidence}`で記録する。現行プロトコルへseed適用を追加していない。未適用/不明は`status=unknown`やnullで残し、adapterは`status=applied`と実来歴を申告できなければ拒否する。0等を補完しない。申告hashや適用宣言は真正性の証明ではない。
+`seed`は`{value, status, components, evidence}`で記録する。現行プロトコルへseed適用を追加していない。実workerは要求値を`declared_seed`へ残し、適用を検証していないseed本体をunknown/nullとして保存する。adapterは`status=applied`と実来歴を申告できなければ拒否する。0等を補完しない。申告hashや適用宣言は真正性の証明ではない。
 
 ## 入力・oracle・futureの境界
 
@@ -42,7 +42,7 @@ SourceのF0とPredictionのG0は別のworld frame/絶対timeでよい。Source�
 
 SourceのprefixをF0でfreezeし、その後のfutureとは別viewにする。通常viewにSource既知T/v0を含めない。元Snapshot/割当parameterは参照archiveとして保持する。既存A再構成のSnapshotRestorerはknown T/v0を使うため`parameter_policy=reconstruction_known`と明示する。この接続でprefixからtraits推定した、あるいは通常予測を実行したと主張しない。
 
-各input entryは`path/sha256/role`を持つ。`model_observation`には最大Source frame/timeを必須とし、固定viewのhashと実ファイルを照合する。Source既知traitsを含む`model_parameters`はoracle/reconstruction_knownだけに許可する。futureは`evaluation_only`または既存安全採否用`safety_admission`に限定する。未申告データへの全アクセスを遮断するsandboxではなく、宣言されなかった入力の検出保証はない。
+各input entryは`path/sha256/role`を持つ。`model_observation`には最大Source frame/timeを必須とし、固定viewのhashと実ファイルを照合する。Source既知traitsを含む`model_parameters`はoracle/reconstruction_knownだけに許可する。futureは`evaluation_only`または既存安全採否用`safety_admission`に限定する。既知のSource future/混在raw・CSV、既知T/v0を含む原Snapshot/割当parameterは実hashでも識別し、自己申告flagがなくても誤分類を拒否する。未知の別ファイルの意味内容を完全に検査できるとはしない。未申告データへの全アクセスを遮断するsandboxではなく、宣言されなかった入力の検出保証はない。
 
 既存replayの`verify_completed`はSourceのfuture/停止結果を安全採否に読む。この経路を削除せずhost_admission_readsへ役割を記録するが、全runtime read ledgerとは呼ばない。Source完走による選択バイアスも残る。Bのdefault/estimated/oracle比較やCの新しい実走プロトコルは追加していない。adapterは既存A再構成のペアだけを扱う。
 

@@ -132,7 +132,7 @@ def events(run, origin, end, clock, result):
         raw_events=output,label_status='missing',label_protocol=None,labels=[])
 
 
-def input_policy(source, prediction, source_origin):
+def input_policy(source, prediction, source_origin, known_future, known_traits):
     """Check declared inputs, never claim a sandbox or complete runtime read audit."""
     parent=prediction['parent']
     check(parent['run_id']==source['run_id'] and parent['origin']=={
@@ -148,9 +148,13 @@ def input_policy(source, prediction, source_origin):
                 check(integer(entry['maximum_source_frame'])<=source_origin['frame'] and
                     num(entry['maximum_source_timestamp'])<=source_origin['simulation_time_s']+1e-6,'FUTURE_MODEL_INPUT')
                 check(entry['sha256'] in {ref['sha256'] for ref in source_origin['view'].values()},'MODEL_INPUT_NOT_FROZEN_VIEW')
-            if entry.get('contains_source_traits'):
-                check(provenance['parameter_policy'] in ('oracle','reconstruction_known') and entry['role']=='model_parameters','ORACLE_INFORMATION_LEAK')
-            if entry.get('contains_source_future'):check(entry['role'] in ('evaluation_only','safety_admission'),'FUTURE_MODEL_INPUT')
+            contains_traits=entry.get('contains_source_traits') or entry['sha256'] in known_traits
+            if contains_traits:
+                check(entry['role'] in ('evaluation_only','safety_admission') or
+                    provenance['parameter_policy'] in ('oracle','reconstruction_known') and
+                    entry['role']=='model_parameters','ORACLE_INFORMATION_LEAK')
+            if entry.get('contains_source_future') or entry['sha256'] in known_future:
+                check(entry['role'] in ('evaluation_only','safety_admission'),'FUTURE_MODEL_INPUT')
             # Hash inventory is checked by value against the actual declared file.
             path=Path(entry['path']).resolve()
             if path not in verified_inputs:
@@ -255,7 +259,12 @@ def adapt(source_dir, prediction_dir, output):
         (s,so,sb,sa),(p,po,pb,pa)=converted
         check(s['role']=='source' and p['role']=='prediction' and s['run_id']!=p['run_id'],'RUN_PARENT_ROLES')
         check(s['evidence_kind']==p['evidence_kind'] and s['evidence_kind'] in ('synthetic','recorded_carla'),'EVIDENCE_KIND')
-        report['declared_input_hashes']=input_policy(s,p,so)
+        known_future={digest(readers[0].read(name)) for name in
+            ('prediction_states.csv','calibration_raw.jsonl','calibration_observations.csv','v2_validation.csv',
+             'v2_control_diagnostics.jsonl','pair_raw.jsonl','pair_observations.csv','risk_events.csv','collision_events.jsonl')
+             if name in readers[0].inventory}
+        known_traits={digest(readers[0].read(name)) for name in ('initial_snapshot.json','resolved_idm_parameters.json')}
+        report['declared_input_hashes']=input_policy(s,p,so,known_future,known_traits)
         # This adapter connects the existing replay protocol, not a new predictor.
         check(p['parameter_policy']=='reconstruction_known','ONLY_EXPLICIT_A_RECONSTRUCTION_SUPPORTED')
         def artifact(name,data,csv=False):

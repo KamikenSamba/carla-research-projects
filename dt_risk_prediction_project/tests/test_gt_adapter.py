@@ -246,3 +246,20 @@ raise SystemExit(main(sys.argv[1:]))
     env=dict(os.environ,PYTHONPATH=str(Path(__file__).resolve().parents[1]))
     result=subprocess.run([sys.executable,'-X','utf8','-c',script,*args],env=env,capture_output=True,text=True,timeout=30)
     assert result.returncode==0,result.stderr
+
+
+@pytest.mark.parametrize('name,policy,expected',[
+    ('prediction_states.csv','reconstruction_known','FUTURE_MODEL_INPUT'),
+    ('calibration_raw.jsonl','reconstruction_known','FUTURE_MODEL_INPUT'),
+    ('resolved_idm_parameters.json','default','ORACLE_INFORMATION_LEAK'),
+    ('initial_snapshot.json','estimated','ORACLE_INFORMATION_LEAK'),
+])
+def test_known_source_files_mislabelled_without_flags_are_rejected(runs,tmp_path,name,policy,expected):
+    # Copy outside the Source directory: classification must use bytes, not filename alone.
+    original=runs/'source'/name;disguised=tmp_path/'parameter-input.bin';disguised.write_bytes(original.read_bytes())
+    def change(provenance):
+        provenance['parameter_policy']=policy
+        provenance['inputs'].append(dict(path=str(disguised),sha256=digest(disguised.read_bytes()),role='model_parameters'))
+    edit(runs/'prediction','gt_run_provenance.json',change)
+    result=adapt(runs/'source',runs/'prediction',tmp_path/'out')
+    assert result['status']=='INPUT_INCOMPLETE' and expected in result['errors'][0],result
