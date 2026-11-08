@@ -1,0 +1,66 @@
+{
+  "contract_id": "dt_source_future_contract_v1",
+  "status": "collection_contract_v1_pending_evaluation_approval",
+  "units": {"position": "m", "velocity": "m/s", "rotation": "degree", "time": "s"},
+  "purposes": ["A_reconstruction", "B_method_forecast", "C_T_counterfactual"],
+  "required": {
+    "manifest": ["schema_version", "evidence_kind", "source", "prediction", "registry", "evaluation", "safety"],
+    "source": ["run_id", "protocol", "code_commit", "seed", "dt_s", "origin", "prefix_start_frame", "horizon_steps", "actor_map", "control", "artifacts"],
+    "prediction": ["run_id", "code_commit", "seed", "parent_source_id", "parent_snapshot_sha256", "parent_prefix_sha256", "reference_origin", "origin", "dt_s", "horizon_steps", "actor_map", "method", "control", "initialization", "inputs", "model_data", "artifacts"],
+    "origin": ["frame", "simulation_time_s"],
+    "source_artifacts": ["snapshot", "prefix", "future", "clock", "environment", "physics", "bbox", "initial_control", "events"],
+    "prediction_artifacts": ["snapshot", "future", "clock", "environment", "physics", "bbox", "initial_control", "events"],
+    "artifact": ["path", "sha256"],
+    "environment": ["client_version", "server_version", "map", "opendrive_sha256", "weather", "world_settings", "route_sha256", "external_actor_inventory", "known_exogenous_information"],
+    "control": ["longitudinal", "steering", "parameters", "state_capture"],
+    "initialization": ["stage", "first_command_based_on_frame", "first_response_frame", "ticks_after_initial_measurement", "internal_physics_state"],
+    "inputs": ["prefix", "maximum_source_frame", "maximum_source_timestamp", "inventory_complete"],
+    "model_data": ["training_source_ids", "tuning_source_ids", "evaluation_source_ids", "approach"],
+    "evaluation": ["purpose", "requested_metrics", "initial_policy", "information_policy"],
+    "initial_policy": ["status", "thresholds", "approval_reference"],
+    "safety": ["experiment_status", "route_audit", "physical_bounds"]
+  },
+  "artifact_formats": {
+    "snapshot": "existing idm_snapshot.read_snapshot JSON actors; integer frame/Actor IDs",
+    "prefix": "ActorState-like CSV: carla_frame,sim_time_s,logical_actor_id,source_actor_id,x,y,z,roll,pitch,yaw,vx,vy,vz,speed_mps; full contiguous cohort",
+    "future": "existing PredictionState CSV: F0+k, prediction_time_s=k*dt, k=1..H/dt",
+    "clock": "CSV frame,simulation_time_s from actual world snapshots, includes origin and every future frame; never generated solely from loop index",
+    "environment": "required.environment JSON; equality of map/hash/version/weather/settings/route/external actors/known exogenous information",
+    "physics": "JSON {measurement_status:complete_static,unknown_fields:[],actors:{logical:raw physics}}; existing physics_settings normalization for static comparison",
+    "bbox": "JSON logical -> {location:{x,y,z},extent:{x,y,z},rotation:{roll,pitch,yaw}}",
+    "initial_control": "JSON {frame,simulation_time_s,actors:{logical:{throttle,brake,steer,hand_brake,reverse,gear,manual_gear_shift}}}; measured at snapshot origin",
+    "events": "JSON {capture_status,frame_start,frame_end,covered_logical_ids,raw_definitions,raw_events,label_status,label_protocol,labels}; raw_events keep event frame/timestamp, pair,kind,original payload and provenance",
+    "registry": "JSON {sources:[{source_run_id,split,protocol,code_commit,data_manifest_sha256}]}; one split per Source across all windows; historical source manifests require separate authenticity review"
+  },
+  "causality": {
+    "allowed_observed_information": "Source prefix frames <= F0 and timestamp <= t0",
+    "future_role": "evaluation_only_withheld",
+    "prefix_snapshot_end_state_must_match": true,
+    "training_tuning_evaluation_source_overlap": "reject",
+    "undeclared_inputs": "reject; producer inventory declaration still requires code review",
+    "known_future_schedule": "only preregistered exogenous information, distinct from observed future",
+    "source_splits": ["train", "tune", "test"]
+  },
+  "initial_state_policy": {
+    "status": "PROPOSED_UNAPPROVED",
+    "candidate_position_xyz_norm_m": 0.001,
+    "candidate_velocity_xyz_norm_mps": 0.001,
+    "candidate_heading_deg": 0.01,
+    "candidate_roll_pitch_deg": 0.01,
+    "candidate_bbox_and_static_physics": "semantic equality proposal only; no acceptance rule is approved or applied",
+    "approved_thresholds": null,
+    "approval_reference": null,
+    "validator_behavior": "record residuals and initial configuration differences only; neither thresholds nor exact equality decide acceptance; scoring and runtime execution always disabled"
+  },
+  "numeric_serialization_tolerance_s": 0.000001,
+  "event_policy": {
+    "raw_collision_and_near_miss": "preserve original detector definition and event frame/time; no inferred labels",
+    "risk_metrics_require": "complete independent annotation, negative windows, all pair/frame coverage, definition and provenance",
+    "proxy_labels": "not independent collision/near-miss truth",
+    "incomplete_labels": "trajectory-only contract may retain limitation; risk_detection request rejected",
+    "disappearance_collision": "complete-cohort prototype rejects incomplete trajectory; future censoring contract required"
+  },
+  "production_evaluator_purposes_unchanged": ["reconstruction_repeatability", "synthetic_validation"],
+  "independent_forecast_accuracy_enabled": false,
+  "runtime_execution_enabled": false
+}

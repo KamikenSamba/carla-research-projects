@@ -384,3 +384,25 @@ def test_headway_changes_following_equilibrium(parameters):
         assert gap == pytest.approx(expected, abs=0.03)
         final_gaps.append(gap)
     assert final_gaps[0] < final_gaps[1] < final_gaps[2]
+
+
+@pytest.mark.parametrize("suffix", [".json", ".csv"])
+def test_snapshot_rows_api_matches_existing_path(tmp_path, suffix):
+    from idm_snapshot import read_snapshot_rows
+    row=old_row();row.update(desired_time_headway_s="1.2", desired_speed_mps="", role_name="test")
+    path=tmp_path/("snapshot"+suffix)
+    if suffix==".json":path.write_text(json.dumps({"actors":[row]}),encoding="utf-8-sig")
+    else:
+        with path.open("w",encoding="utf-8-sig",newline="") as stream:
+            writer=csv.DictWriter(stream,fieldnames=list(row));writer.writeheader();writer.writerow(row)
+    assert read_snapshot(path)==read_snapshot_rows([row])
+
+
+@pytest.mark.parametrize("change", [{"speed_mps":"nan"},{"autopilot_enabled":"unknown"},{"x":None}])
+def test_snapshot_rows_and_path_reject_same_invalid_values(tmp_path, change):
+    from idm_snapshot import read_snapshot_rows
+    row=old_row();row.update(change);path=tmp_path/"snapshot.json"
+    path.write_text(json.dumps([row]),encoding="utf-8")
+    with pytest.raises(ValueError) as direct:read_snapshot_rows([row])
+    with pytest.raises(ValueError) as legacy:read_snapshot(path)
+    assert str(direct.value)==str(legacy.value)
