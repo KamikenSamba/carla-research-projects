@@ -88,7 +88,7 @@ def test_mock_full_e2e_reuses_real_collector_data_and_preserves_originals(collec
     ('gt_capture_coverage.json',lambda d:d['sensors'].pop(next(iter(d['sensors']))),'EVENT_SENSOR_COHORT'),
     ('gt_origin.json',lambda d:d.update(before_first_command=False),'ORIGIN_COHORT_OR_ORDER'),
     ('gt_origin.json',lambda d:d.update(raw_prefix_sha256='f'*64),'FROZEN_RAW_PREFIX_CHANGED'),
-    ('gt_origin.json',lambda d:d['actor_map'].update(leader=9999),'GT raw actor'),
+    ('gt_origin.json',lambda d:d['actor_map'].update(leader=9999),'ORIGINAL_SNAPSHOT_ID_FRAME'),
 ])
 def test_incomplete_collection_never_emits_valid_manifest(runs,tmp_path,name,change,expected):
     edit(runs/'source',name,change)

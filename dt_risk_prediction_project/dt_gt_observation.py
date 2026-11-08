@@ -48,7 +48,7 @@ def options(payload):
     return load_json(encoded(value))
 
 
-def raw_rows(raw, actor_map):
+def raw_rows(raw, actor_map, metadata):
     """Normalize existing raw state with its *measured* world clock, not loop t."""
     inverse={v:k for k,v in actor_map.items()};result=[];seen=set()
     for envelope in raw:
@@ -63,10 +63,10 @@ def raw_rows(raw, actor_map):
             seen.add(key)
             if row['frame']!=frame or row['control_read_at_frame']!=frame:
                 raise ValueError('GT raw observation frame')
-            velocity=row['velocity'];logical=inverse[actor]
+            velocity=row['velocity'];logical=inverse[actor];identity=metadata[logical]
             state=dict(phase=envelope['phase'],carla_frame=frame,sim_time_s=world_time,
-                source_actor_id=actor,logical_actor_id=logical,role_name=logical,
-                blueprint_id='vehicle.tesla.model3',autopilot_enabled=False,
+                source_actor_id=actor,logical_actor_id=logical,role_name=identity['role_name'],
+                blueprint_id=identity['blueprint_id'],autopilot_enabled=identity['autopilot_enabled'],
                 **row['transform'],**{'v'+k:velocity[k] for k in 'xyz'},
                 speed_mps=math.sqrt(sum(velocity[k]**2 for k in 'xyz')))
             state=read_snapshot_rows([state])[0]
@@ -168,12 +168,13 @@ class GTObserver:
         raw_data=(self.directory/'calibration_raw.jsonl').read_bytes()
         raw=[load_json(line) for line in raw_data.decode('utf-8').splitlines()]
         if any(r['carla_frame']>frame for r in raw):raise ValueError('GT freeze contains future raw')
-        normalized=raw_rows(raw,amap);rows=[state for state,_,_ in normalized]
+        original=(self.directory/'initial_snapshot.json').read_bytes()
+        original_rows=read_snapshot_rows(load_json(original)['actors'])
+        metadata={r['logical_actor_id']:r for r in original_rows}
+        normalized=raw_rows(raw,amap,metadata);rows=[state for state,_,_ in normalized]
         origin_rows={s['logical_actor_id']:(s,r) for s,r,_ in normalized if s['carla_frame']==frame}
         if set(origin_rows)!=set(amap):raise ValueError('GT incomplete origin actors')
         # Compare original Snapshot kinematics, retaining its original local clock/archive.
-        original=(self.directory/'initial_snapshot.json').read_bytes()
-        original_rows=read_snapshot_rows(load_json(original)['actors'])
         for old in original_rows:
             actual=origin_rows[old['logical_actor_id']][0]
             if old['source_actor_id']!=amap[old['logical_actor_id']] or old['carla_frame']!=frame:

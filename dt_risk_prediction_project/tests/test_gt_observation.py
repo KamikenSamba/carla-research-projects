@@ -60,7 +60,7 @@ def collect(directory, monkeypatch, enabled=True, role='source', parent=None, fa
         def next(self,d):return [Waypoint(self.transform.location.x+d)]
     actors={}
     for i,(logical,x) in enumerate((('solo',0.),) if single else (('follower',0.),('leader',20.))):
-        actor=FakeActor(base+i+1,x,0.);actor.type_id='vehicle.tesla.model3';actor.attributes={'role_name':logical}
+        actor=FakeActor(base+i+1,x,0.);actor.type_id='vehicle.tesla.model3';actor.attributes={'role_name':'mock_role:'+logical}
         actor.bounding_box=NS(location=NS(x=0.,y=0.,z=0.),extent=NS(x=2.,y=1.,z=1.),rotation=NS(yaw=0.,pitch=0.,roll=0.))
         actor.control=NS(throttle=0.,brake=0.,steer=0.,hand_brake=False,reverse=False,manual_gear_shift=False,gear=1)
         actor.acceleration=0.
@@ -159,6 +159,7 @@ def test_real_v2_mock_on_off_command_pid_actuator_tick_equivalence(tmp_path,monk
     physics=json.loads((tmp_path/'on/gt_physics_extras.json').read_text(encoding='utf-8'))
     assert all(p['acquisition_frame']==100 and p['acquisition_time_s']==1000. for p in physics.values())
     view=json.loads((tmp_path/'on/gt_input_view/snapshot.json').read_text(encoding='utf-8'))
+    assert all(r['role_name']=='mock_role:'+r['logical_actor_id'] for r in view['actors'])
     assert all(r['desired_time_headway_s'] is None and r['desired_speed_mps'] is None for r in view['actors'])
     assert json.loads((tmp_path/'on/gt_capture_coverage.json').read_text(encoding='utf-8'))['capture_status']=='complete'
 

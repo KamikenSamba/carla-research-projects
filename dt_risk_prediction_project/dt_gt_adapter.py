@@ -183,7 +183,11 @@ def transform_run(run):
               for r in snapshot['actors']),'ORACLE_TRAITS_IN_KINEMATIC_VIEW')
     raw_data=run.read('calibration_raw.jsonl');prefix_size=integer(origin['raw_prefix_size'])
     check(digest(raw_data[:prefix_size])==origin['raw_prefix_sha256'],'FROZEN_RAW_PREFIX_CHANGED')
-    normalized=raw_rows(run.lines('calibration_raw.jsonl'),amap)
+    original_snapshot=run.json('initial_snapshot.json',expected=origin['legacy_snapshot_sha256'])
+    metadata={r['logical_actor_id']:r for r in read_snapshot_rows(original_snapshot['actors'])}
+    check(set(metadata)==set(amap) and all(r['source_actor_id']==amap[k] and r['carla_frame']==f0
+        for k,r in metadata.items()),'ORIGINAL_SNAPSHOT_ID_FRAME')
+    normalized=raw_rows(run.lines('calibration_raw.jsonl'),amap,metadata)
     index={(r['logical_actor_id'],r['carla_frame']):(r,raw,env) for r,raw,env in normalized}
     prefix=[r for r,_,_ in normalized if r['carla_frame']<=f0]
     frozen=csv_rows_from_bytes(run.read(origin['view']['prefix.csv']['path'],listed=False))
