@@ -236,3 +236,54 @@ def test_replay_environment_difference_rejects_before_capture(tmp_path,monkeypat
     if mismatch:
         with pytest.raises(EarlyStop,match='environment_mismatch'):h.prepare()
     else:h.prepare()
+
+
+@pytest.mark.parametrize('failure',['clock_append','origin_create','finalize'])
+def test_gt_io_failure_preserves_single_abort_cleanup_and_settings(tmp_path,monkeypatch,failure):
+    from pathlib import Path
+    from test_gt_observation import collect
+    real=Path.open
+    def failing(path,mode='r',*args,**kwargs):
+        targets={'clock_append':('gt_clock.jsonl','ab'), 'origin_create':('gt_origin.json','xb'),
+                 'finalize':('gt_artifact_inventory.json','xb')}
+        if (path.name,mode)==targets[failure]:raise OSError('synthetic receipt I/O failure')
+        return real(path,mode,*args,**kwargs)
+    def inject(h):monkeypatch.setattr(Path,'open',failing)
+    h,result,_,commands,world,live=collect(tmp_path/'run',monkeypatch,single=True,fault=inject)
+    assert result['status']=='exception',result
+    assert result['cleanup']['complete'] and len(live)==1
+    assert vars(world.settings)==dict(synchronous_mode=False,fixed_delta_seconds=None)
+    if failure!='finalize':assert commands[-1][2]['brake']==.70
+    else:assert 'gt_observation_error' in result
+
+
+def test_gt_poisoned_gate_does_not_add_cleanup_rpc(tmp_path,monkeypatch):
+    from idm_harness_host import ServerUnavailable
+    from test_gt_observation import collect
+    counts={}
+    def inject(h):
+        def capture():
+            h.gate.poisoned=True
+            raise ServerUnavailable('synthetic poisoned server')
+        # No preparation API is real; count gate.call attempts after poison.
+        original=h.call
+        def guarded(fn,*a,**kw):
+            if h.gate.poisoned:counts['after']=counts.get('after',0)+1
+            return original(fn,*a,**kw)
+        h.call=guarded;h.capture=capture
+    _,result,*_=collect(tmp_path/'run',monkeypatch,single=True,fault=inject)
+    assert result['status']=='server_unavailable'
+    assert counts.get('after',0)==0
+    assert not result['cleanup']['complete']
+
+
+def test_gt_offline_config_never_connects_and_synthetic_execute_is_rejected(tmp_path,monkeypatch):
+    from test_gt_observation import provenance
+    p=tmp_path/'config.json'
+    metadata=provenance('source');metadata['evidence_kind']='recorded_carla'
+    payload=dict(trial='single',scenario=asdict(ValidationConfig()),ground_truth_observation=metadata)
+    p.write_text(json.dumps(payload),encoding='utf-8')
+    monkeypatch.setattr(entry,'native_identity',lambda *a:pytest.fail('OS/RPC path forbidden'))
+    assert entry.main(['--config',str(p)])==0
+    payload['ground_truth_observation']['evidence_kind']='synthetic';p.write_text(json.dumps(payload),encoding='utf-8')
+    with pytest.raises(ValueError,match='mock-only'):entry.main(['--config',str(p),'--execute'])

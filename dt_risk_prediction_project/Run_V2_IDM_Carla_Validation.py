@@ -11,6 +11,7 @@ from idm_carla_validation import ValidationConfig,V2SingleHarness,V2FleetHarness
 from idm_model import compute_idm_acceleration
 from idm_pair_exploration import pair_budget
 from idm_v2_reconstruction import SnapshotRestorer
+from dt_gt_observation import GTObserver, options, digest
 from idm_harness_host import listener_pids
 from Run_Exploratory_Model3 import native_identity,same_identity,session_valid,IdentityGate
 from Run_IDM_Following_Experiment import supervise
@@ -73,8 +74,14 @@ def main(argv=None):
     p.add_argument('--run-dir',type=Path,help=argparse.SUPPRESS)
     p.add_argument('--supervisor-pid',type=int,help=argparse.SUPPRESS)
     a=p.parse_args(argv);a.stage1_result=None
-    payload=json.loads(a.config.read_text(encoding='utf-8-sig'));c=ValidationConfig(trial=payload['trial'])
+    config_bytes=a.config.read_bytes()
+    payload=json.loads(config_bytes.decode('utf-8-sig'));c=ValidationConfig(trial=payload['trial'])
     if payload.get('scenario')!=asdict(c):raise ValueError('scenario differs from fixed exploratory protocol')
+    gt_options=options(payload)
+    if gt_options and gt_options['role']!=('prediction' if c.trial=='replay' else 'source'):
+        raise ValueError('GT role differs from existing trial')
+    if gt_options and gt_options['evidence_kind']!='recorded_carla':
+        raise ValueError('synthetic observations are mock-only; not an executable CARLA option')
     if not a.execute and not a.worker:
         print(json.dumps(dict(status='offline_plan_only',scenario=asdict(c),strict_scene_audit='BLOCKED',
             route_audit=None,physical_bounds=None,requires_authorized_session=True),indent=2));return 0
@@ -105,11 +112,22 @@ def main(argv=None):
         client=carla.Client('127.0.0.1',a.port);client.set_timeout(5.)
         harness=(V2SingleHarness(client,carla,c,a.run_dir,gate) if c.trial=='single' else
                  V2FleetHarness(client,carla,c,a.run_dir,gate,single_stop_m=stop_m,source_run=source_run))
+        if gt_options:
+            launch=json.loads((a.run_dir/'launch.json').read_text(encoding='utf-8'))
+            if digest(config_bytes)!=launch['config_file_sha256']:raise ValueError('GT worker config differs from supervisor hash')
+            provenance=dict(gt_options,code_commit=launch['source_commit'],source_dirty=launch['source_dirty'],
+                declared_seed=gt_options.get('seed'),
+                seed=dict(value=None,status='unknown',components=[],
+                    evidence='existing bounded backend does not apply or verify random seeds'),
+                config_reference=dict(path=str(a.config.resolve()),sha256=digest(config_bytes)),
+                host_admission_reads=dict(single_run=payload.get('single_run'),source_run=payload.get('source_run'),
+                    scope='existing verify_completed; safety/admission only; not a full runtime access audit'))
+            harness.gt_observer=GTObserver(a.run_dir,provenance)
         result=harness.run()
         # Do not let a binding destructor attempt RPC after server failure.
         sys.stdout.flush();sys.stderr.flush();os._exit(result['exit_code'])
     return supervise(a,c,entrypoint=Path(__file__),source_files=(
-        'Run_V2_IDM_Carla_Validation.py','idm_pair_exploration.py','idm_v2_reconstruction.py','Run_DT_Risk_V1.py','Run_DT_Risk_V2_IDM.py','dt_risk_common.py','Run_Exploratory_Model3.py','idm_carla_validation.py','idm_controller.py','idm_model.py','idm_snapshot.py','idm_leader.py','idm_low_speed.py','idm_reverse_motion.py','idm_staged_stop.py','idm_brake_harness.py','idm_brake_config.py',
+        'dt_gt_observation.py','dt_gt_adapter.py','Run_V2_IDM_Carla_Validation.py','idm_pair_exploration.py','idm_v2_reconstruction.py','Run_DT_Risk_V1.py','Run_DT_Risk_V2_IDM.py','dt_risk_common.py','Run_Exploratory_Model3.py','idm_carla_validation.py','idm_controller.py','idm_model.py','idm_snapshot.py','idm_leader.py','idm_low_speed.py','idm_reverse_motion.py','idm_staged_stop.py','idm_brake_harness.py','idm_brake_config.py',
         'idm_brake_metrics.py','idm_experiment_harness.py','idm_harness_host.py'),
         verify_completed=lambda directory,result:verify_completed(directory,result,c))
 

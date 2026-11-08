@@ -18,6 +18,7 @@ from Run_DT_Risk_V1 import detect_near_misses
 from dt_risk_common import PredictionState, prediction_state_fieldnames, risk_event_fieldnames, to_row
 from idm_pair_exploration import PairHarness
 from idm_v2_reconstruction import SnapshotRestorer, physics_settings
+from dt_gt_observation import GTObservationMixin
 
 
 @dataclass(frozen=True)
@@ -108,7 +109,7 @@ V2_FIELDS=['observation_frame','command_based_on_frame','observation_time_s','lo
     'T_s','v0_mps','s0_m','a_mps2','b_mps2','maximum_deceleration_parameter_mps2']
 
 
-class V2SingleHarness(ExploratoryHarness):
+class V2SingleHarness(GTObservationMixin, ExploratoryHarness):
     def initialize_fleet(self,actors,last):
         self.parameters=(self.restorer.parameters if getattr(self,'restorer',None) else
                          {k:validation_parameters(k) for k in actors})
@@ -146,6 +147,8 @@ class V2SingleHarness(ExploratoryHarness):
         with (self.directory/'v2_validation.csv').open('x',encoding='utf-8',newline='') as f:
             csv.DictWriter(f,V2_FIELDS).writeheader()
         (self.directory/'v2_control_diagnostics.jsonl').open('x',encoding='utf-8').close()
+        observer=getattr(self,'gt_observer',None)
+        if observer:observer.freeze(self,last)
 
     def log_idm(self,requests,observed):
         new_events=len(self.near_events)
@@ -154,9 +157,11 @@ class V2SingleHarness(ExploratoryHarness):
         detect_near_misses({k:GuardedActor(self,a) for k,a in self.logical_actors.items()},
             self.near_events,self.near_regions,0.,self.t-self.prediction_origin,args,self.near_cooldown)
         self.frame_unchanged()
-        for event in self.near_events[new_events:]:
+        for index,event in enumerate(self.near_events[new_events:],start=new_events):
             with (self.directory/'risk_events.csv').open('a',encoding='utf-8',newline='') as f:
                 csv.DictWriter(f,risk_event_fieldnames()).writerow(to_row(event))
+            observer=getattr(self,'gt_observer',None)
+            if observer:observer.near_event(index,self.last_frame,self.last_time)
         for request in requests:
             logical=request['logical_actor_id'];r=observed[logical];p=self.parameters[logical]
             diagnostic=dict(schema_version=1,provenance='recorded_during_control',
@@ -227,7 +232,7 @@ class V2SingleHarness(ExploratoryHarness):
         raise EarlyStop('v2_controlled_stop_timeout',self.actor.id)
 
 
-class V2FleetHarness(PairHarness):
+class V2FleetHarness(GTObservationMixin, PairHarness):
     initialize_fleet=V2SingleHarness.initialize_fleet
     log_idm=V2SingleHarness.log_idm
 
